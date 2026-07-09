@@ -860,10 +860,12 @@ class _JoystickState extends State<Joystick> {
 // ============================================================
 Widget metaHeader(BuildContext context, {String subtitle = 'OPERATIONS HUB'}) {
   final p = Profile.instance;
-  return Padding(
-    padding:
-        EdgeInsets.fromLTRB(16, 10 + MediaQuery.of(context).padding.top, 16, 6),
-    child: Row(
+  return SafeArea(
+    bottom: false,
+    minimum: const EdgeInsets.only(top: 8),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Row(
       children: [
         const ZoneLogo(size: 42, tile: false),
         const SizedBox(width: 12),
@@ -914,6 +916,7 @@ Widget metaHeader(BuildContext context, {String subtitle = 'OPERATIONS HUB'}) {
           ],
         ),
       ],
+      ),
     ),
   );
 }
@@ -1028,7 +1031,7 @@ class _StartOverlayState extends State<StartOverlay> {
                   const SizedBox(height: 16),
                   _mapPicker(),
                   const SizedBox(height: 18),
-                  _DropButton(label: 'DEPLOY  ·  DROP IN', onTap: _drop),
+                  _DropButton(label: 'DROP IN', onTap: _drop),
                   const SizedBox(height: 12),
                   GestureDetector(
                     onTap: () => Navigator.of(context).push(
@@ -1818,7 +1821,7 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
                     const SizedBox(height: 18),
                     Center(
                         child: _DropButton(
-                            label: 'SAVE DEPLOYMENT PROFILE', onTap: _close)),
+                            label: 'SAVE PROFILE', onTap: _close)),
                   ],
                 ),
               ),

@@ -25,8 +25,23 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   // Defaults to the live Render server — friends can just tap Connect.
   final _server =
       TextEditingController(text: 'wss://zone-royale.onrender.com');
-  final _room = TextEditingController(text: 'PUBLIC');
+  late final _room = TextEditingController(text: _randomCode());
   NetClient? _client;
+  bool _deployed = false; // false = lobby, true = in the arena
+  bool _advanced = false; // reveal the server-address field
+
+  // ---- host-configurable room rules (all dynamic from game data) ----
+  int _mapSel = 0; // 0 = RANDOM, else kMapThemes[i-1]
+  int _sizeSel = 0; // index into kMatchModes (10 / 25 / 50)
+  int _weaponSel = -1; // -1 = ALL_ARMS, else index into kWeaponOrder
+  int _bo = 1; // best-of: 1 / 3 / 5
+  bool _medkit = true, _grenades = true, _drone = false;
+
+  static String _randomCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    final r = math.Random();
+    return List.generate(4, (_) => chars[r.nextInt(chars.length)]).join();
+  }
 
   @override
   void dispose() {
@@ -36,11 +51,34 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
     super.dispose();
   }
 
+  String get _mapName =>
+      _mapSel == 0 ? 'RANDOM' : kMapThemes[_mapSel - 1].name.toUpperCase();
+  String get _weaponName => _weaponSel < 0
+      ? 'ALL_ARMS'
+      : kWeapons[kWeaponOrder[_weaponSel]]!.name.toUpperCase();
+
+  Map<String, dynamic> _buildConfig() {
+    final mode = kMatchModes[_sizeSel];
+    final w = _weaponSel < 0 ? null : kWeapons[kWeaponOrder[_weaponSel]];
+    return {
+      'world': mode.world,
+      'maxPlayers': mode.players,
+      'map': _mapName,
+      'weapon': _weaponName,
+      if (w != null) 'dmg': w.damage,
+      if (w != null) 'bulletSpeed': w.bulletSpeed,
+      if (w != null) 'bulletRange': w.range,
+      'rounds': (_bo / 2).ceil(), // wins needed: BO1=1, BO3=2, BO5=3
+      'medkit': _medkit,
+      'grenades': _grenades,
+      'drone': _drone,
+    };
+  }
+
   String _normalizeUrl(String raw) {
     var s = raw.trim();
     if (s.isEmpty) return s;
     if (!s.startsWith('ws://') && !s.startsWith('wss://')) s = 'ws://$s';
-    // add default port for a plain ws host with no port
     if (s.startsWith('ws://') && !s.substring(5).contains(':')) s = '$s:8080';
     return s;
   }
@@ -48,17 +86,26 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   Future<void> _connect() async {
     final url = _normalizeUrl(_server.text);
     if (url.isEmpty) return;
-    final name =
-        Profile.instance.name.trim().isEmpty ? 'Player' : Profile.instance.name.trim();
-    final room = _room.text.trim() == 'PUBLIC' ? '' : _room.text.trim();
+    final name = Profile.instance.name.trim().isEmpty
+        ? 'Player'
+        : Profile.instance.name.trim();
+    final room = _room.text.trim().isEmpty ? 'PUBLIC' : _room.text.trim();
     final c = NetClient();
-    setState(() => _client = c);
-    await c.connect(url, name, room);
+    setState(() {
+      _client = c;
+      _deployed = false;
+    });
+    await c.connect(url, name, room, config: _buildConfig());
   }
+
+  void _startMission() => setState(() => _deployed = true);
 
   void _leave() {
     _client?.close();
-    setState(() => _client = null);
+    setState(() {
+      _client = null;
+      _deployed = false;
+    });
   }
 
   @override
@@ -68,12 +115,14 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
       backgroundColor: const Color(0xFF05070C),
       body: SafeArea(
         child: c == null
-            ? _form()
+            ? _configView()
             : AnimatedBuilder(
                 animation: c.rev,
-                builder: (_, _) => c.status == 'live'
-                    ? _ArenaView(client: c, onLeave: _leave)
-                    : _statusView(c),
+                builder: (_, _) => c.status != 'live'
+                    ? _statusView(c)
+                    : (_deployed
+                        ? _ArenaView(client: c, onLeave: _leave)
+                        : _lobbyView(c)),
               ),
       ),
     );
@@ -138,153 +187,82 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
 
   static const _mono = 'monospace';
 
-  Widget _form() {
+  // ---- shared chrome ----
+  Widget _header() => Padding(
+        padding: const EdgeInsets.fromLTRB(18, 10, 14, 6),
+        child: Row(
+          children: [
+            GestureDetector(
+              onTap: () => Navigator.of(context).maybePop(),
+              child: const Icon(Icons.grid_view_rounded, color: kAccent, size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Text('ZONE ROYALE',
+                style: TextStyle(
+                    color: kAccent,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1)),
+            const Spacer(),
+            Icon(Icons.settings,
+                color: Colors.white.withValues(alpha: 0.6), size: 22),
+          ],
+        ),
+      );
+
+  Widget _titles(String sub, String main) => Column(
+        children: [
+          Text(sub,
+              style: TextStyle(
+                  fontFamily: _mono,
+                  color: kAccent,
+                  fontSize: 13,
+                  letterSpacing: 3)),
+          const SizedBox(height: 6),
+          Text(main,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1)),
+        ],
+      );
+
+  // ============ SETUP: configure the room ============
+  Widget _configView() {
     return Stack(
       children: [
-        // tactical grid + faint recon icons behind everything
         const Positioned.fill(
             child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
-        Positioned(
-          top: 150,
-          right: 24,
-          child: Icon(Icons.storage_rounded,
-              size: 92, color: Colors.white.withValues(alpha: 0.05)),
-        ),
-        Positioned(
-          bottom: 120,
-          left: 12,
-          child: Icon(Icons.track_changes,
-              size: 150, color: Colors.white.withValues(alpha: 0.04)),
-        ),
         Column(
           children: [
-            // ---- header ----
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 10, 14, 6),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.of(context).maybePop(),
-                    child: const Icon(Icons.grid_view_rounded,
-                        color: kAccent, size: 24),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text('ZONE ROYALE',
-                      style: TextStyle(
-                          color: kAccent,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1)),
-                  const Spacer(),
-                  Icon(Icons.settings,
-                      color: Colors.white.withValues(alpha: 0.6), size: 22),
-                ],
-              ),
-            ),
+            _header(),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 22),
                     Center(
-                      child: Text('ESTABLISHING_UPLINK',
+                        child: _titles(
+                            'ACTIVE_SESSION_CONFIG', 'CUSTOM_ROOM_COMMAND')),
+                    const SizedBox(height: 22),
+                    _configCard(),
+                    const SizedBox(height: 16),
+                    _roomCodeField(),
+                    const SizedBox(height: 12),
+                    _advancedServer(),
+                    const SizedBox(height: 18),
+                    _bigButton(
+                        Icons.rocket_launch, 'CREATE / JOIN ROOM', _connect),
+                    const SizedBox(height: 10),
+                    Center(
+                      child: Text('PROTOCOL: $_protocol   ·   HOST SETS THE RULES',
                           style: TextStyle(
                               fontFamily: _mono,
-                              color: kAccent,
-                              fontSize: 14,
-                              letterSpacing: 3)),
-                    ),
-                    const SizedBox(height: 8),
-                    const Center(
-                      child: Text('DEPLOYMENT_TERMINAL',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900,
+                              color: Colors.white.withValues(alpha: 0.3),
+                              fontSize: 10,
                               letterSpacing: 1)),
-                    ),
-                    const SizedBox(height: 26),
-                    // ---- terminal card ----
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.03),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.08)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _termField('SERVER ADDRESS', _server,
-                              icon: Icons.dns_rounded),
-                          const SizedBox(height: 20),
-                          _termField('ROOM CODE', _room,
-                              icon: Icons.vpn_key_rounded),
-                          const SizedBox(height: 24),
-                          GestureDetector(
-                            onTap: _connect,
-                            child: Container(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 17),
-                              decoration: BoxDecoration(
-                                color: kAccent,
-                                borderRadius: BorderRadius.circular(14),
-                                boxShadow: [
-                                  BoxShadow(
-                                      color: kAccent.withValues(alpha: 0.4),
-                                      blurRadius: 22,
-                                      spreadRadius: -2),
-                                ],
-                              ),
-                              child: const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.wifi_tethering,
-                                      color: Colors.black, size: 20),
-                                  SizedBox(width: 12),
-                                  Text('CONNECT TO SERVER',
-                                      style: TextStyle(
-                                          color: Colors.black,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w900,
-                                          letterSpacing: 1)),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text('PROTOCOL: $_protocol',
-                                  style: TextStyle(
-                                      fontFamily: _mono,
-                                      color: Colors.white.withValues(alpha: 0.35),
-                                      fontSize: 11,
-                                      letterSpacing: 1)),
-                              Text('LATENCY: -- MS',
-                                  style: TextStyle(
-                                      fontFamily: _mono,
-                                      color: Colors.white.withValues(alpha: 0.35),
-                                      fontSize: 11,
-                                      letterSpacing: 1)),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Playing as ${Profile.instance.name}  ·  share the room code '
-                      'with friends to land in the same match.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.3),
-                          fontSize: 11,
-                          height: 1.5),
                     ),
                   ],
                 ),
@@ -297,53 +275,544 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
     );
   }
 
-  Widget _termField(String label, TextEditingController ctrl,
-      {required IconData icon}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _configCard() {
+    final mode = kMatchModes[_sizeSel];
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: kAccent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _fieldLabel('MAP & SECTOR'),
+          _dropField(Icons.map_rounded, '$_mapName [SECTOR_${_mapSel + 1}]',
+              () => setState(() =>
+                  _mapSel = (_mapSel + 1) % (kMapThemes.length + 1))),
+          const SizedBox(height: 6),
+          _sectionLine('MATCH_RULES'),
+          _fieldLabel('WEAPON TYPE'),
+          _dropField(Icons.gps_fixed, _weaponName, () {
+            setState(() => _weaponSel = _weaponSel >= kWeaponOrder.length - 1
+                ? -1
+                : _weaponSel + 1);
+          }),
+          const SizedBox(height: 14),
+          _fieldLabel('ROUNDS'),
+          _pillGroup(const ['BO1', 'BO3', 'BO5'], const [1, 3, 5], _bo,
+              (v) => setState(() => _bo = v)),
+          const SizedBox(height: 14),
+          _fieldLabel('PLAYER LIMIT'),
+          _pillGroup([
+            for (final m in kMatchModes) '${m.players}'
+          ], [
+            for (var i = 0; i < kMatchModes.length; i++) i
+          ], _sizeSel, (v) => setState(() => _sizeSel = v)),
+          const SizedBox(height: 6),
+          _sectionLine('EQUIPMENT_RESTRICTIONS'),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _toggleChip('MEDKIT_V1', _medkit,
+                  () => setState(() => _medkit = !_medkit)),
+              _toggleChip('GRENADES', _grenades,
+                  () => setState(() => _grenades = !_grenades)),
+              _toggleChip('DRONE_INTEL', _drone,
+                  () => setState(() => _drone = !_drone)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text('Arena: ${mode.name} · world ${mode.world.round()}u',
+              style: TextStyle(
+                  fontFamily: _mono,
+                  color: Colors.white.withValues(alpha: 0.3),
+                  fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  // ============ LOBBY: connected, waiting to deploy ============
+  Widget _lobbyView(NetClient c) {
+    return Stack(
       children: [
-        Text(label,
+        const Positioned.fill(
+            child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
+        Column(
+          children: [
+            _header(),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(child: _titles('ROOM_${_room.text}', 'BRIEFING_ROOM')),
+                    const SizedBox(height: 18),
+                    _summaryCard(c),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Text('CONNECTED_PLAYERS',
+                            style: TextStyle(
+                                fontFamily: _mono,
+                                color: Colors.white.withValues(alpha: 0.6),
+                                fontSize: 13,
+                                letterSpacing: 1,
+                                fontWeight: FontWeight.w700)),
+                        const Spacer(),
+                        Text('${c.players.length} / ${c.maxPlayers}',
+                            style: TextStyle(
+                                fontFamily: _mono,
+                                color: kAccent,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    for (final p in c.players) _rosterTile(c, p),
+                    if (c.players.length <= 1)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                            'Share room code “${_room.text}” so friends can join.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.35),
+                                fontSize: 11)),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
+              child: Column(
+                children: [
+                  _bigButton(Icons.rocket_launch, 'START MISSION', _startMission),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                          child: _ghostButton(
+                              Icons.wifi_tethering, 'RECONNECT', _connect)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                          child: _ghostButton(
+                              Icons.logout, 'LEAVE ROOM', _leave)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            _bottomNav(),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _summaryCard(NetClient c) {
+    Widget row(String k, String v) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(k,
+                  style: TextStyle(
+                      fontFamily: _mono,
+                      color: Colors.white.withValues(alpha: 0.5),
+                      fontSize: 12,
+                      letterSpacing: 1)),
+              Text(v,
+                  style: const TextStyle(
+                      fontFamily: _mono,
+                      color: kAccent,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800)),
+            ],
+          ),
+        );
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kAccent.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          row('MAP', c.map),
+          row('WEAPON', c.weapon),
+          row('ROUNDS', 'BEST OF ${c.rounds * 2 - 1}'),
+          row('PLAYER LIMIT', '${c.maxPlayers}'),
+        ],
+      ),
+    );
+  }
+
+  Widget _rosterTile(NetClient c, NetPlayer p) {
+    final host = p.id == c.hostId;
+    final me = p.id == c.myId;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: me ? kSafeEdge.withValues(alpha: 0.5) : Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: Color(kOutfitColors[p.id % kOutfitColors.length])
+                  .withValues(alpha: 0.9),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.person, color: Colors.white70, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(me ? '${p.name}  (YOU)' : p.name.toUpperCase(),
+                    style: const TextStyle(
+                        fontFamily: _mono,
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800)),
+                const SizedBox(height: 2),
+                Text('READY   ·   WINS ${p.wins}',
+                    style: TextStyle(
+                        fontFamily: _mono,
+                        color: const Color(0xFF57E389).withValues(alpha: 0.9),
+                        fontSize: 11)),
+              ],
+            ),
+          ),
+          Icon(host ? Icons.star : Icons.star_border,
+              color: host ? kAccent : Colors.white24, size: 20),
+        ],
+      ),
+    );
+  }
+
+  // ---- small building blocks ----
+  Widget _fieldLabel(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 8, top: 2),
+        child: Text(t,
             style: TextStyle(
                 fontFamily: _mono,
                 color: Colors.white.withValues(alpha: 0.55),
                 fontSize: 12,
                 letterSpacing: 2,
                 fontWeight: FontWeight.w600)),
-        const SizedBox(height: 10),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.35),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-          ),
-          child: Row(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 0, 8, 0),
-                child: Icon(icon,
-                    size: 18, color: Colors.white.withValues(alpha: 0.4)),
-              ),
-              Expanded(
-                child: TextField(
-                  controller: ctrl,
-                  onChanged: (_) => setState(() {}), // refresh protocol tag
+      );
+
+  Widget _sectionLine(String t) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Text(t,
+                style: TextStyle(
+                    fontFamily: _mono,
+                    color: Colors.white.withValues(alpha: 0.4),
+                    fontSize: 11,
+                    letterSpacing: 2)),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Container(
+                    height: 1, color: Colors.white.withValues(alpha: 0.08))),
+          ],
+        ),
+      );
+
+  Widget _dropField(IconData icon, String value, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.35),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: Colors.white.withValues(alpha: 0.5)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(value,
                   style: TextStyle(
                       fontFamily: _mono,
-                      color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 15),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(vertical: 16),
-                  ),
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700)),
+            ),
+            Icon(Icons.expand_more,
+                color: Colors.white.withValues(alpha: 0.5), size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pillGroup(
+      List<String> labels, List<int> values, int sel, ValueChanged<int> onSel) {
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(
+            child: GestureDetector(
+              onTap: () => onSel(values[i]),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: sel == values[i]
+                      ? kAccent.withValues(alpha: 0.16)
+                      : Colors.black.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: sel == values[i]
+                          ? kAccent
+                          : Colors.white.withValues(alpha: 0.1)),
+                ),
+                child: Text(labels[i],
+                    style: TextStyle(
+                        fontFamily: _mono,
+                        color: sel == values[i] ? kAccent : Colors.white70,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800)),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _toggleChip(String label, bool on, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: on ? kAccent.withValues(alpha: 0.12) : Colors.black26,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: on ? kAccent.withValues(alpha: 0.7) : Colors.white12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: on ? kAccent : Colors.white24),
+            ),
+            const SizedBox(width: 8),
+            Text(label,
+                style: TextStyle(
+                    fontFamily: _mono,
+                    color: on ? Colors.white : Colors.white38,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _roomCodeField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _fieldLabel('ROOM CODE  (share to squad up)'),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(12),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                ),
+                child: Row(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(14, 0, 8, 0),
+                      child: Icon(Icons.vpn_key_rounded,
+                          size: 18, color: Colors.white38),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _room,
+                        textCapitalization: TextCapitalization.characters,
+                        style: const TextStyle(
+                            fontFamily: _mono,
+                            color: Colors.white,
+                            fontSize: 16,
+                            letterSpacing: 2,
+                            fontWeight: FontWeight.w800),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.symmetric(vertical: 15),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            GestureDetector(
+              onTap: () => setState(() => _room.text = _randomCode()),
+              child: Container(
+                padding: const EdgeInsets.all(13),
+                decoration: BoxDecoration(
+                  color: kAccent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: kAccent.withValues(alpha: 0.6)),
+                ),
+                child: const Icon(Icons.casino, color: kAccent, size: 20),
+              ),
+            ),
+          ],
         ),
       ],
     );
   }
+
+  Widget _advancedServer() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _advanced = !_advanced),
+          child: Row(
+            children: [
+              Icon(_advanced ? Icons.expand_less : Icons.expand_more,
+                  size: 18, color: Colors.white38),
+              const SizedBox(width: 4),
+              Text('ADVANCED · SERVER',
+                  style: TextStyle(
+                      fontFamily: _mono,
+                      color: Colors.white.withValues(alpha: 0.4),
+                      fontSize: 11,
+                      letterSpacing: 1)),
+            ],
+          ),
+        ),
+        if (_advanced) ...[
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            ),
+            child: Row(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(14, 0, 8, 0),
+                  child: Icon(Icons.dns_rounded,
+                      size: 18, color: Colors.white38),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _server,
+                    style: const TextStyle(
+                        fontFamily: _mono, color: Colors.white70, fontSize: 13),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _bigButton(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: kAccent,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+                color: kAccent.withValues(alpha: 0.4),
+                blurRadius: 22,
+                spreadRadius: -2),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: Colors.black, size: 20),
+            const SizedBox(width: 12),
+            Text(label,
+                style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _ghostButton(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: Colors.white70),
+            const SizedBox(width: 8),
+            Text(label,
+                style: const TextStyle(
+                    fontFamily: _mono,
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1)),
+          ],
+        ),
+      ),
+    );
+  }
+
+
 
   // Jump to a real app section: pop this route, then switch the menu screen.
   void _goto(String screen) {
@@ -494,7 +963,9 @@ class _ArenaViewState extends State<_ArenaView> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _pill('ALIVE  ${c.aliveCount}'),
-              _pill('KILLS  ${me?.kills ?? 0}'),
+              if (c.rounds > 1)
+                _pill('ROUND  ${c.round}/${c.rounds * 2 - 1}', color: kAccent),
+              _pill('WINS  ${me?.wins ?? 0}'),
               GestureDetector(
                 onTap: widget.onLeave,
                 child: _pill('LEAVE', color: kAccent2),
@@ -502,8 +973,48 @@ class _ArenaViewState extends State<_ArenaView> {
             ],
           ),
         ),
+        // match over banner (takes priority)
+        if (c.matchWinner != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('MATCH OVER',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 16,
+                            letterSpacing: 4,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 8),
+                    Text('${c.matchWinner} WINS'.toUpperCase(),
+                        style: const TextStyle(
+                            color: kAccent,
+                            fontSize: 36,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2)),
+                  ],
+                ),
+              ),
+            ),
+          )
+        // round result banner
+        else if (c.roundBanner != null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: Text(c.roundBanner!,
+                    style: const TextStyle(
+                        color: kSafeEdge,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 2)),
+              ),
+            ),
+          )
         // death banner
-        if (me != null && !me.alive)
+        else if (me != null && !me.alive)
           const Positioned.fill(
             child: IgnorePointer(
               child: Center(
@@ -561,10 +1072,27 @@ class _ArenaPainter extends CustomPainter {
   final NetClient c;
   _ArenaPainter(this.c);
 
+  // Ground tint per selected room map — so the host's map choice is visible.
+  static Color _groundFor(String map) {
+    switch (map.toUpperCase()) {
+      case 'URBAN BUILDINGS':
+      case 'URBAN':
+        return const Color(0xFF15171C);
+      case 'FOREST':
+        return const Color(0xFF10190F);
+      case 'COMPOUND':
+        return const Color(0xFF17140F);
+      case 'BADLANDS':
+        return const Color(0xFF1B140E);
+      default:
+        return const Color(0xFF10141B);
+    }
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
-    // background
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xFF10141B));
+    // background (tinted by the room's chosen map)
+    canvas.drawRect(Offset.zero & size, Paint()..color = _groundFor(c.map));
 
     final me = c.me;
     final camX = me?.x ?? c.world / 2;

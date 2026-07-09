@@ -55,6 +55,7 @@ class Player {
   double mx = 0, my = 0; // movement input (-1..1)
   bool fire = false, alive = true;
   int kills = 0;
+  int roundWins = 0;
   String name;
   Room? roomRef;
   Player(this.id, this.socket, this.x, this.y, this.name);
@@ -73,12 +74,54 @@ class Room {
   Timer? _loop;
   Room(this.code);
 
+  // ---- host-configurable match settings (BGMI-style custom room) ----
+  bool configured = false;
+  double world = worldSize;
+  double dmg = bulletDamage;
+  double bSpeed = bulletSpeed;
+  double bRange = bulletRange;
+  String map = 'RANDOM';
+  String weapon = 'RIFLE';
+  int maxPlayers = 10;
+  int rounds = 1; // round wins needed to win the match
+  int roundNo = 1;
+  bool _roundEnding = false;
+  bool matchOver = false;
+
+  // First player to create the room is the host and sets the rules.
+  void configure(Map cfg) {
+    if (configured) return;
+    world = (cfg['world'] as num?)?.toDouble() ?? world;
+    dmg = (cfg['dmg'] as num?)?.toDouble() ?? dmg;
+    bSpeed = (cfg['bulletSpeed'] as num?)?.toDouble() ?? bSpeed;
+    bRange = (cfg['bulletRange'] as num?)?.toDouble() ?? bRange;
+    map = (cfg['map'] as String?) ?? map;
+    weapon = (cfg['weapon'] as String?) ?? weapon;
+    maxPlayers = (cfg['maxPlayers'] as num?)?.toInt() ?? maxPlayers;
+    rounds = ((cfg['rounds'] as num?)?.toInt() ?? rounds).clamp(1, 9);
+    configured = true;
+  }
+
+  Map<String, dynamic> get cfgMsg => {
+        'type': 'roomcfg',
+        'code': code,
+        'world': world,
+        'map': map,
+        'weapon': weapon,
+        'rounds': rounds,
+        'round': roundNo,
+        'maxPlayers': maxPlayers,
+        'host': players.isNotEmpty ? players.first.id : 0,
+      };
+
   void add(Player p) {
     players.add(p);
-    _send(p, {'type': 'welcome', 'id': p.id, 'world': worldSize});
+    _send(p, {'type': 'welcome', 'id': p.id, 'world': world});
+    broadcast(cfgMsg); // everyone learns the room rules
     _loop ??= Timer.periodic(
         Duration(milliseconds: 1000 ~/ tickHz), (_) => _tick());
-    print('+ player ${p.id} -> room "$code" (${players.length} online)');
+    print('+ player ${p.id} -> room "$code" '
+        '(${players.length}/$maxPlayers, map=$map, gun=$weapon, rounds=$rounds)');
   }
 
   void remove(Player p) {
@@ -102,20 +145,38 @@ class Room {
     p.my = (m['my'] as num?)?.toDouble() ?? 0;
     p.aim = (m['aim'] as num?)?.toDouble() ?? p.aim;
     final f = m['fire'] == true;
-    if (f && !p.fire && p.alive) {
+    if (f && !p.fire && p.alive && !matchOver) {
       bullets.add(Bullet(
         p.x + cos(p.aim) * hitRadius,
         p.y + sin(p.aim) * hitRadius,
-        cos(p.aim) * bulletSpeed,
-        sin(p.aim) * bulletSpeed,
+        cos(p.aim) * bSpeed,
+        sin(p.aim) * bSpeed,
         p.id,
       ));
     }
     p.fire = f;
   }
 
+  void _spawn(Player p) {
+    p.x = 40 + _rng.nextDouble() * (world - 80);
+    p.y = 40 + _rng.nextDouble() * (world - 80);
+    p.hp = 100;
+    p.alive = true;
+  }
+
+  void _respawnAll() {
+    for (final p in players) {
+      _spawn(p);
+    }
+    bullets.clear();
+  }
+
   void _tick() {
     const dt = 1 / tickHz;
+    if (matchOver) {
+      broadcast(_snapshot());
+      return;
+    }
     // movement
     for (final p in players) {
       if (!p.alive) continue;
@@ -125,20 +186,20 @@ class Room {
         mx /= len;
         my /= len;
       }
-      p.x = (p.x + mx * playerSpeed * dt).clamp(20.0, worldSize - 20);
-      p.y = (p.y + my * playerSpeed * dt).clamp(20.0, worldSize - 20);
+      p.x = (p.x + mx * playerSpeed * dt).clamp(20.0, world - 20);
+      p.y = (p.y + my * playerSpeed * dt).clamp(20.0, world - 20);
     }
     // bullets + hit detection
     for (final b in bullets) {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      b.dist += bulletSpeed * dt;
+      b.dist += bSpeed * dt;
       for (final p in players) {
         if (!p.alive || p.id == b.owner) continue;
         final dx = p.x - b.x, dy = p.y - b.y;
         if (dx * dx + dy * dy < hitRadius * hitRadius) {
-          p.hp -= bulletDamage;
-          b.dist = bulletRange + 1; // consume the bullet
+          p.hp -= dmg;
+          b.dist = bRange + 1; // consume the bullet
           if (p.hp <= 0) {
             p.alive = false;
             final killer =
@@ -150,35 +211,76 @@ class Room {
       }
     }
     bullets.removeWhere((b) =>
-        b.dist > bulletRange ||
-        b.x < 0 ||
-        b.x > worldSize ||
-        b.y < 0 ||
-        b.y > worldSize);
+        b.dist > bRange || b.x < 0 || b.x > world || b.y < 0 || b.y > world);
 
-    // broadcast snapshot
-    final snap = jsonEncode({
-      'type': 'state',
-      'players': [
-        for (final p in players)
-          {
-            'id': p.id,
-            'x': p.x.round(),
-            'y': p.y.round(),
-            'aim': double.parse(p.aim.toStringAsFixed(2)),
-            'hp': p.hp.round(),
-            'alive': p.alive,
-            'kills': p.kills,
-            'name': p.name,
-          }
-      ],
-      'bullets': [
-        for (final b in bullets) {'x': b.x.round(), 'y': b.y.round()}
-      ],
+    _checkRoundEnd();
+    broadcast(_snapshot());
+  }
+
+  // Round / match win logic: last one standing wins the round; first to
+  // [rounds] round-wins takes the match.
+  void _checkRoundEnd() {
+    if (_roundEnding || players.length < 2) return;
+    final aliveList = players.where((p) => p.alive).toList();
+    if (aliveList.length > 1) return;
+    _roundEnding = true;
+    final winner = aliveList.isNotEmpty ? aliveList.first : null;
+    if (winner != null) winner.roundWins++;
+    broadcast({
+      'type': 'round',
+      'winner': winner?.id ?? 0,
+      'name': winner?.name ?? '—',
+      'round': roundNo,
+      'rounds': rounds,
     });
+    if (winner != null && winner.roundWins >= rounds) {
+      matchOver = true;
+      broadcast({'type': 'matchover', 'winner': winner.id, 'name': winner.name});
+      Timer(const Duration(seconds: 8), () {
+        matchOver = false;
+        _roundEnding = false;
+        roundNo = 1;
+        for (final p in players) {
+          p.roundWins = 0;
+          p.kills = 0;
+        }
+        _respawnAll();
+      });
+    } else {
+      Timer(const Duration(seconds: 3), () {
+        roundNo++;
+        _respawnAll();
+        _roundEnding = false;
+      });
+    }
+  }
+
+  String _snapshot() => jsonEncode({
+        'type': 'state',
+        'players': [
+          for (final p in players)
+            {
+              'id': p.id,
+              'x': p.x.round(),
+              'y': p.y.round(),
+              'aim': double.parse(p.aim.toStringAsFixed(2)),
+              'hp': p.hp.round(),
+              'alive': p.alive,
+              'kills': p.kills,
+              'wins': p.roundWins,
+              'name': p.name,
+            }
+        ],
+        'bullets': [
+          for (final b in bullets) {'x': b.x.round(), 'y': b.y.round()}
+        ],
+      });
+
+  void broadcast(Object msg) {
+    final s = msg is String ? msg : jsonEncode(msg);
     for (final p in players) {
       try {
-        p.socket.add(snap);
+        p.socket.add(s);
       } catch (_) {}
     }
   }
@@ -220,7 +322,11 @@ Future<void> main() async {
                       ? (m['name'] as String).trim()
                       : p.name;
                   final room = roomFor((m['room'] as String?) ?? '');
+                  // The host (first player to create the room) sets the rules.
+                  final cfg = m['config'];
+                  if (cfg is Map) room.configure(cfg);
                   p.roomRef = room;
+                  room._spawn(p); // place inside the (possibly resized) arena
                   room.add(p);
                 }
                 break;

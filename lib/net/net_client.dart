@@ -7,11 +7,11 @@ import 'package:flutter/foundation.dart';
 class NetPlayer {
   final int id;
   final double x, y, aim;
-  final int hp, kills;
+  final int hp, kills, wins;
   final bool alive;
   final String name;
   const NetPlayer(this.id, this.x, this.y, this.aim, this.hp, this.kills,
-      this.alive, this.name);
+      this.wins, this.alive, this.name);
 
   factory NetPlayer.from(Map m) => NetPlayer(
         (m['id'] as num).toInt(),
@@ -20,6 +20,7 @@ class NetPlayer {
         (m['aim'] as num).toDouble(),
         (m['hp'] as num).toInt(),
         (m['kills'] as num?)?.toInt() ?? 0,
+        (m['wins'] as num?)?.toInt() ?? 0,
         m['alive'] == true,
         (m['name'] as String?) ?? '',
       );
@@ -47,10 +48,24 @@ class NetClient {
   List<NetPlayer> players = const [];
   List<NetBullet> bullets = const [];
 
+  // room match settings (from the host's config)
+  String map = 'RANDOM';
+  String weapon = 'RIFLE';
+  int rounds = 1;
+  int round = 1;
+  int maxPlayers = 10;
+  int hostId = 0;
+  String? roundBanner; // e.g. "ROUND 1 — AVA WINS"
+  String? matchWinner; // set when the match is decided
+
+  Map<String, dynamic>? _joinConfig;
+
   final ValueNotifier<int> rev = ValueNotifier(0);
 
-  Future<void> connect(String url, String name, String room) async {
+  Future<void> connect(String url, String name, String room,
+      {Map<String, dynamic>? config}) async {
     error = null;
+    _joinConfig = config;
     // Free hosts (Render free tier) spin the server down when idle. The first
     // request wakes it but can take ~30-60s — far longer than a WebSocket
     // handshake will wait. So we first send a plain HTTP GET to wake it (which
@@ -67,7 +82,12 @@ class NetClient {
         final ws =
             await WebSocket.connect(url).timeout(const Duration(seconds: 15));
         _ws = ws;
-        ws.add(jsonEncode({'type': 'join', 'name': name, 'room': room}));
+        ws.add(jsonEncode({
+          'type': 'join',
+          'name': name,
+          'room': room,
+          if (_joinConfig != null) 'config': _joinConfig,
+        }));
         ws.listen(
           _onData,
           onError: (Object e) => _fail('$e'),
@@ -122,6 +142,27 @@ class NetClient {
           status = 'live';
           _bump();
           break;
+        case 'roomcfg':
+          map = (m['map'] as String?) ?? map;
+          weapon = (m['weapon'] as String?) ?? weapon;
+          rounds = (m['rounds'] as num?)?.toInt() ?? rounds;
+          round = (m['round'] as num?)?.toInt() ?? round;
+          maxPlayers = (m['maxPlayers'] as num?)?.toInt() ?? maxPlayers;
+          hostId = (m['host'] as num?)?.toInt() ?? hostId;
+          _bump();
+          break;
+        case 'round':
+          round = (m['round'] as num?)?.toInt() ?? round;
+          final name = (m['name'] as String?) ?? '—';
+          roundBanner = 'ROUND $round  —  $name WINS';
+          round += 1;
+          _bump();
+          break;
+        case 'matchover':
+          matchWinner = (m['name'] as String?) ?? '—';
+          roundBanner = null;
+          _bump();
+          break;
         case 'state':
           players = [
             for (final p in (m['players'] as List)) NetPlayer.from(p as Map)
@@ -130,6 +171,11 @@ class NetClient {
             for (final b in (m['bullets'] as List))
               NetBullet((b['x'] as num).toDouble(), (b['y'] as num).toDouble())
           ];
+          // a fresh match cleared the winner banner
+          if (matchWinner != null && players.any((p) => p.wins == 0) &&
+              players.every((p) => p.alive)) {
+            matchWinner = null;
+          }
           _bump();
           break;
       }
