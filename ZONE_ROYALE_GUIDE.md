@@ -8,6 +8,7 @@ a multiplayer server prototype included.
 
 ## Changelog (latest first)
 
+- **Cold-start resilience** — connecting now wakes a sleeping free-tier host (HTTP pre-warm) and retries the socket up to 5× with a *"Waking the server…"* state, so multiplayer no longer fails on the first connect after the server sleeps. Guide documents a free keep-alive pinger.
 - **Pushed to GitHub** — full project at `github.com/TANMOYDAS1234/Zone-Royale` (ready for the Render Blueprint deploy).
 - **Customise control placement (BGMI-style)** — Profile → *Customise Control Placement* opens a drag editor; all six touch controls — move/aim sticks, skill, grenade, reload and the fire-mode toggle — float at your saved positions in-match (persisted). On touch they leave the info row and float freely; on desktop they stay in the row.
 - **Online multiplayer client** — MULTIPLAYER button → connect by server address + room code, live twin-stick arena rendering real players/bullets from server snapshots (`lib/net/`).
@@ -33,6 +34,7 @@ Top-down last-one-standing shooter: drop in, loot weapons, survive the shrinking
 gas zone, get kills, win. Built for fast sessions and long-term retention.
 
 **Live features (all shipped, on-device):**
+
 - **Core BR:** movement, shooting ballistics, knockback, loot (weapons/medkits/grenades), shrinking gas zone, last-one-standing win.
 - **Modes:** Skirmish (10) · Clash (25) · Warzone (50) — map size + zone timing scale to player count.
 - **Maps:** 4 themes (Urban buildings, Forest trees, Compound rooms, Badlands boulders) — random or pickable, each with its own ground/cover look.
@@ -48,14 +50,14 @@ gas zone, get kills, win. Built for fast sessions and long-term retention.
 
 ## 2. Tech stack
 
-| Piece | Choice | Why |
-|---|---|---|
-| Framework | **Flutter** (Dart) | one codebase, all devices |
-| Game engine | **Flame** (`flame`) | 2D game loop, canvas rendering |
-| Persistence | **shared_preferences** | profile/progression/shop save |
-| Audio | **audioplayers** + `.wav` assets | reliable `AssetSource` playback (WAVs baked by `tool/gen_sfx.dart`) |
-| Share | **share_plus** + **path_provider** | share the result screenshot to any app |
-| Multiplayer | **dart:io WebSocket** (client + server) | pure Dart, no deps; custom rooms |
+| Piece       | Choice                                         | Why                                                                    |
+| ----------- | ---------------------------------------------- | ---------------------------------------------------------------------- |
+| Framework   | **Flutter** (Dart)                       | one codebase, all devices                                              |
+| Game engine | **Flame** (`flame`)                    | 2D game loop, canvas rendering                                         |
+| Persistence | **shared_preferences**                   | profile/progression/shop save                                          |
+| Audio       | **audioplayers** + `.wav` assets       | reliable`AssetSource` playback (WAVs baked by `tool/gen_sfx.dart`) |
+| Share       | **share_plus** + **path_provider** | share the result screenshot to any app                                 |
+| Multiplayer | **dart:io WebSocket** (client + server)  | pure Dart, no deps; custom rooms                                       |
 
 **Almost no asset files** — all art is drawn with `Canvas`/`CustomPainter`; the
 only assets are ~10 tiny synthesised `.wav` SFX (`assets/sfx/`, a few KB each,
@@ -145,6 +147,7 @@ pubspec.yaml             deps: flame, shared_preferences, audioplayers, share_pl
 ```
 
 **Where to change things:**
+
 - Weapon stats / new gun → `config.dart` (`kWeapons`, `WeaponId`) + draw in `char_art.dart` (`_drawWeapon`) + `_preferred`/`_tracerW` in `royale_game.dart`.
 - New hero/skill → `config.dart` (`kHeroes`, `SkillType`) + `char_art.dart` (`_drawHeroGear`) + `activateSkill`/effects in `royale_game.dart`.
 - New map theme → `config.dart` (`kMapThemes`) + `_drawObstacles`/`_drawGround` in `royale_game.dart`.
@@ -168,6 +171,7 @@ Online play works end-to-end: an **authoritative server** (`server/`) runs the
 one true simulation and a **client** (`lib/net/`) renders it.
 
 ### Client (`lib/net/`)
+
 - `net_client.dart` — `NetClient`: connects over a `dart:io` WebSocket (no extra
   dependency; works on Android/iOS/desktop), sends `{type:input,...}` at ~30 Hz,
   parses `{type:state,...}` snapshots, exposes `players`/`bullets`/`me` and a
@@ -180,32 +184,52 @@ one true simulation and a **client** (`lib/net/`) renders it.
   (`Navigator.push(MultiplayerScreen())`).
 
 ### Server (`server/bin/server.dart`)
+
 Pure `dart:io`. Movement + bullets + hits + kills at 20 Hz, broadcast to all
 clients. **Custom rooms:** clients that send the same `room` code share a match
 (empty code → `PUBLIC`); rooms auto-close when empty.
 
 **Run it (free LAN play):**
+
 ```bash
 cd server && dart pub get && dart run bin/server.dart   # listens on :8080
 ```
+
 Find your PC's IPv4 (`ipconfig`, e.g. `192.168.1.5`), then on a phone on the
 same Wi‑Fi open MULTIPLAYER and enter `ws://192.168.1.5:8080`. Allow Dart
 through the Windows firewall if prompted.
 
 **Message protocol (JSON):**
+
 - Client → server: `{"type":"join","name":"Ava","room":"NIGHT"}`, then
   `{"type":"input","mx":..,"my":..,"aim":..,"fire":true}`.
 - Server → client: `{"type":"welcome","id":N,"world":3200}` then 20 Hz
   `{"type":"state","players":[{id,x,y,aim,hp,alive,kills,name}],"bullets":[{x,y}]}`.
 
 ### Deploy to the internet — Render.com (free)
+
 Ships with `server/Dockerfile` + `render.yaml` (repo root). Push to GitHub →
-Render → **New + → Blueprint → pick repo**. Render builds the image and gives a
-public URL; enter `wss://<your-app>.onrender.com` in the app. Free instance
-sleeps after ~15 min idle (first connect wakes it in a few seconds).
-See `server/README.md` for the full walkthrough.
+Render → **New + → Blueprint → pick repo** (or a manual Docker web service with
+**Root Directory = `server`**, Dockerfile Path `./Dockerfile`, Health Check `/`,
+Free plan). Render builds the image and gives a public URL; enter
+`wss://<your-app>.onrender.com` in the app. See `server/README.md` for the full
+walkthrough.
+
+**Cold starts (handled).** The free instance sleeps after ~15 min idle and a
+cold wake takes ~30–60s — longer than a WebSocket handshake will wait. The
+client copes: `NetClient.connect()` first sends an HTTP GET to wake the host
+(Render holds that request open until the instance is live), shows a
+*"Waking the server…"* state, then connects with a 15s timeout and up to 5
+retries. So the first connect after a sleep just takes a bit; it doesn't fail.
+
+**Keep it warm (optional, free).** To avoid cold starts during play sessions,
+have a free uptime pinger hit the URL every ~10 min:
+[cron-job.org](https://cron-job.org) or [UptimeRobot](https://uptimerobot.com) →
+monitor `https://<your-app>.onrender.com/` on a 10-minute interval. That keeps
+the instance awake within the free tier's monthly hours.
 
 ### Still to grow (optional)
+
 Server-side zone shrink + loot + match lifecycle (lobby → match → results), and
 snapshot interpolation on the client for buttery motion at higher latency.
 

@@ -76,25 +76,39 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   }
 
   Widget _statusView(NetClient c) {
-    final connecting = c.status == 'connecting';
+    final busy = c.status == 'connecting' || c.status == 'waking';
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (connecting)
+          if (busy)
             const CircularProgressIndicator(color: kSafeEdge)
           else
             const Icon(Icons.wifi_off, color: kAccent2, size: 54),
           const SizedBox(height: 18),
           Text(
-            connecting
-                ? 'Connecting…'
-                : c.status == 'closed'
-                    ? 'Disconnected'
-                    : 'Could not connect',
+            c.status == 'waking'
+                ? 'Waking the server…'
+                : c.status == 'connecting'
+                    ? 'Connecting…'
+                    : c.status == 'closed'
+                        ? 'Disconnected'
+                        : 'Could not connect',
             style: const TextStyle(color: Colors.white, fontSize: 18),
           ),
-          if (c.error != null && !connecting) ...[
+          if (c.status == 'waking') ...[
+            const SizedBox(height: 8),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                'Free hosting sleeps when idle — first connect can take up to a '
+                'minute. Hang tight…',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ),
+          ],
+          if (c.error != null && !busy) ...[
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),

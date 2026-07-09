@@ -50,25 +50,64 @@ class NetClient {
   final ValueNotifier<int> rev = ValueNotifier(0);
 
   Future<void> connect(String url, String name, String room) async {
-    status = 'connecting';
     error = null;
+    // Free hosts (Render free tier) spin the server down when idle. The first
+    // request wakes it but can take ~30-60s — far longer than a WebSocket
+    // handshake will wait. So we first send a plain HTTP GET to wake it (which
+    // Render holds open until the instance is live), then connect the socket,
+    // retrying a few times to ride out the cold start.
+    status = 'waking';
     _bump();
+    await _wake(url);
+
+    for (var attempt = 1; attempt <= 5; attempt++) {
+      status = attempt == 1 ? 'connecting' : 'waking';
+      _bump();
+      try {
+        final ws =
+            await WebSocket.connect(url).timeout(const Duration(seconds: 15));
+        _ws = ws;
+        ws.add(jsonEncode({'type': 'join', 'name': name, 'room': room}));
+        ws.listen(
+          _onData,
+          onError: (Object e) => _fail('$e'),
+          onDone: () {
+            if (status != 'error') status = 'closed';
+            connected = false;
+            _bump();
+          },
+          cancelOnError: true,
+        );
+        return; // connected — done
+      } catch (e) {
+        error = '$e';
+        if (attempt == 5) {
+          _fail('$e');
+          return;
+        }
+        await Future<void>.delayed(const Duration(seconds: 4));
+      }
+    }
+  }
+
+  /// Sends an HTTP GET to the same host to wake a sleeping free-tier instance.
+  /// Best-effort: any failure is ignored (the socket retry loop handles it).
+  Future<void> _wake(String wsUrl) async {
+    HttpClient? client;
     try {
-      final ws = await WebSocket.connect(url).timeout(const Duration(seconds: 8));
-      _ws = ws;
-      ws.add(jsonEncode({'type': 'join', 'name': name, 'room': room}));
-      ws.listen(
-        _onData,
-        onError: (Object e) => _fail('$e'),
-        onDone: () {
-          if (status != 'error') status = 'closed';
-          connected = false;
-          _bump();
-        },
-        cancelOnError: true,
-      );
-    } catch (e) {
-      _fail('$e');
+      final httpUrl = wsUrl
+          .replaceFirst('wss://', 'https://')
+          .replaceFirst('ws://', 'http://');
+      client = HttpClient()..connectionTimeout = const Duration(seconds: 12);
+      final req = await client
+          .getUrl(Uri.parse(httpUrl))
+          .timeout(const Duration(seconds: 15));
+      final resp = await req.close().timeout(const Duration(seconds: 55));
+      await resp.drain<void>();
+    } catch (_) {
+      // ignore — the instance may already be awake or the retry loop will cope
+    } finally {
+      client?.close(force: true);
     }
   }
 
