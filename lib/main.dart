@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'game/profile.dart';
 import 'game/royale_game.dart';
 import 'game/sfx.dart';
+import 'ui/brand.dart';
 import 'ui/game_ui.dart';
 
 Future<void> main() async {
@@ -53,6 +54,7 @@ class _GamePageState extends State<GamePage> {
   late final RoyaleGame game;
   final FocusNode _focus = FocusNode();
   final Set<LogicalKeyboardKey> _keys = {};
+  bool _showSplash = true;
 
   @override
   void initState() {
@@ -153,6 +155,12 @@ class _GamePageState extends State<GamePage> {
                   },
                 ),
               ),
+              if (_showSplash)
+                Positioned.fill(
+                  child: SplashScreen(
+                    onDone: () => setState(() => _showSplash = false),
+                  ),
+                ),
             ],
           ),
         ),

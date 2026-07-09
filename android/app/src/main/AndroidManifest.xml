@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for online multiplayer (WebSocket to the game server). Release
+         builds do NOT inherit this from the debug manifest, so it must be here. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Zone Royale"
         android:name="${applicationName}"

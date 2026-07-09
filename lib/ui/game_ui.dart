@@ -13,6 +13,7 @@ import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/royale_game.dart';
 import '../net/net_arena.dart';
+import 'brand.dart';
 
 // ============================================================
 //  Reusable emblem (matches the app icon motif: closing zone)
@@ -698,6 +699,7 @@ class _ControlsEditorState extends State<ControlsEditor> {
 }
 
 class _EditorGridPainter extends CustomPainter {
+  const _EditorGridPainter();
   @override
   void paint(Canvas canvas, Size size) {
     final p = Paint()
@@ -852,6 +854,130 @@ class _JoystickState extends State<Joystick> {
 // ============================================================
 //  Start screen
 // ============================================================
+// ============================================================
+//  Shared premium chrome: tactical header + bottom nav bar
+// ============================================================
+Widget metaHeader({String subtitle = 'OPERATIONS HUB'}) {
+  final p = Profile.instance;
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+    child: Row(
+      children: [
+        const ZoneLogo(size: 42, tile: false),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('ZONE ROYALE',
+                style: TextStyle(
+                    color: kAccent,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1,
+                    height: 1)),
+            Text(subtitle,
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    fontSize: 10,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+        const Spacer(),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: p.rankColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: p.rankColor.withValues(alpha: 0.7)),
+              ),
+              child: Text('RANK: ${p.rank.toUpperCase()}',
+                  style: TextStyle(
+                      color: p.rankColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5)),
+            ),
+            const SizedBox(height: 5),
+            Text('🪙  ${p.coins}',
+                style: const TextStyle(
+                    color: Color(0xFFFFD36B),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class MetaNav extends StatelessWidget {
+  final RoyaleGame game;
+  final String active;
+  const MetaNav({super.key, required this.game, required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget item(IconData icon, String label, String s) {
+      final on = s == active;
+      final col = on ? kAccent : Colors.white.withValues(alpha: 0.42);
+      return Expanded(
+        child: GestureDetector(
+          onTap: on ? null : () => game.screen.value = s,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: on
+                ? BoxDecoration(
+                    color: kAccent.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12))
+                : null,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: col, size: 22),
+                const SizedBox(height: 4),
+                Text(label,
+                    style: TextStyle(
+                        color: col,
+                        fontSize: 10,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0D13),
+        border:
+            Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            item(Icons.home_rounded, 'HOME', Screen.start),
+            item(Icons.shopping_cart_rounded, 'SHOP', Screen.shop),
+            item(Icons.assignment_rounded, 'MISSIONS', Screen.missions),
+            item(Icons.person_rounded, 'PROFILE', Screen.profile),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class StartOverlay extends StatefulWidget {
   final RoyaleGame game;
   const StartOverlay({super.key, required this.game});
@@ -869,172 +995,221 @@ class _StartOverlayState extends State<StartOverlay> {
     widget.game.startMatch(kMatchModes[_mode]);
   }
 
-  Widget _levelStrip() {
-    final p = Profile.instance;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-          decoration: BoxDecoration(
-            color: p.rankColor.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: p.rankColor.withValues(alpha: 0.7)),
-          ),
-          child: Text('Lv ${p.level} · ${p.rank}',
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: p.rankColor)),
-        ),
-        const SizedBox(width: 8),
-        Text('${p.coins} 🪙',
-            style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFFFFD36B))),
-      ],
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final game = widget.game;
     return Container(
-      color: Colors.black.withValues(alpha: 0.6),
-      child: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: 26),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+      color: const Color(0xFF07090E),
+      child: Column(
+        children: [
+          metaHeader(subtitle: 'OPERATIONS HUB'),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _operatorUnitCard(),
+                  const SizedBox(height: 14),
+                  _schematicCard(),
+                  const SizedBox(height: 18),
+                  _sectionLabel('SELECT DEPLOYMENT'),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      for (var i = 0; i < kMatchModes.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 10),
+                        Expanded(child: _modeCard(i)),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _mapPicker(),
+                  const SizedBox(height: 18),
+                  _DropButton(label: 'DEPLOY  ·  DROP IN', onTap: _drop),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                          builder: (_) => MultiplayerScreen(game: game)),
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        color: kSafeEdge.withValues(alpha: 0.10),
+                        border:
+                            Border.all(color: kSafeEdge.withValues(alpha: 0.7)),
+                      ),
+                      child: const Text('🌐  MULTIPLAYER  ·  LIVE',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 1,
+                              color: kSafeEdge)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          MetaNav(game: game, active: Screen.start),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String t) => Row(
+        children: [
+          Container(width: 4, height: 15, color: kAccent),
+          const SizedBox(width: 8),
+          Text(t,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1)),
+        ],
+      );
+
+  Widget _operatorUnitCard() {
+    final p = Profile.instance;
+    final unit = kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name.toUpperCase();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(16),
+        border: Border(left: BorderSide(color: kAccent, width: 3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('OPERATOR UNIT',
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 11,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Row(
             children: [
-              SizedBox(
-                  width: 92,
-                  height: 92,
-                  child: CustomPaint(painter: EmblemPainter())),
-              const SizedBox(height: 8),
-              const Text('ZONE ROYALE',
-                  style: TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 2)),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: 80,
-                height: 80,
-                child: CustomPaint(
-                  painter: OperatorPreviewPainter(
-                    outfit: Profile.instance.outfitColor,
-                    skin: Profile.instance.skinColor,
-                    accessory: Profile.instance.accessory,
-                    weapon: Profile.instance.startWeapon,
-                  ),
-                ),
-              ),
-              Text(Profile.instance.name,
+              Text('$unit · ${p.name}'.toUpperCase(),
                   style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                      color: kAccent)),
-              const SizedBox(height: 8),
-              _levelStrip(),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 22),
-                child: Column(
-                  children: [
-                    for (var i = 0; i < kMatchModes.length; i++) _modeCard(i),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 22),
-                child: _mapPicker(),
-              ),
-              const SizedBox(height: 14),
-              _DropButton(label: 'DROP IN', onTap: _drop),
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                      builder: (_) => const MultiplayerScreen()),
-                ),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(40),
-                    color: kSafeEdge.withValues(alpha: 0.12),
-                    border: Border.all(color: kSafeEdge.withValues(alpha: 0.7)),
-                  ),
-                  child: const Text('🌐  MULTIPLAYER  ·  LIVE',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                          color: kSafeEdge)),
-                ),
-              ),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: () => game.screen.value = Screen.profile,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(40),
-                    border: Border.all(color: Colors.white30),
-                  ),
-                  child: const Text('PROFILE  ·  CUSTOMISE',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800, letterSpacing: 1)),
-                ),
-              ),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: () => game.screen.value = Screen.missions,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(40),
-                    border: Border.all(color: kAccent.withValues(alpha: 0.6)),
-                  ),
-                  child: const Text('DAILY MISSIONS',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                          color: kAccent)),
-                ),
-              ),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: () => game.screen.value = Screen.shop,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(40),
-                    border: Border.all(
-                        color: const Color(0xFFFFD36B).withValues(alpha: 0.6)),
-                  ),
-                  child: const Text('SHOP  🛒',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 1,
-                          color: Color(0xFFFFD36B))),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                game.touchMode
-                    ? 'Left move · Right aim/fire · 💣 throw · tap gun = reload'
-                    : 'WASD move · mouse aim · click fire · R reload · G grenade · B fire',
-                style: const TextStyle(color: Colors.white38, fontSize: 12),
-              ),
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900)),
+              const Spacer(),
+              Text('LVL ${p.level}',
+                  style: const TextStyle(
+                      color: kAccent,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900)),
             ],
           ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: p.xpFraction,
+              minHeight: 8,
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
+              valueColor: const AlwaysStoppedAnimation(kAccent),
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text('${p.xp} / ${p.xpForNext} XP  →  NEXT LEVEL',
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.4),
+                  fontSize: 10,
+                  letterSpacing: 1)),
+        ],
+      ),
+    );
+  }
+
+  // The real, honest 2D operator inside a tactical HUD schematic frame.
+  Widget _schematicCard() {
+    final p = Profile.instance;
+    final unit = kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name.toUpperCase();
+    return Container(
+      height: 240,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kAccent.withValues(alpha: 0.35)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Stack(
+          children: [
+            const Positioned.fill(
+                child: IgnorePointer(
+                    child: CustomPaint(painter: _EditorGridPainter()))),
+            Center(
+              child: SizedBox(
+                width: 168,
+                height: 168,
+                child: CustomPaint(
+                  painter: OperatorPreviewPainter(
+                    outfit: p.outfitColor,
+                    skin: p.skinColor,
+                    accessory: p.accessory,
+                    weapon: p.startWeapon,
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 12,
+              left: 12,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: kAccent2.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: kAccent2.withValues(alpha: 0.7)),
+                ),
+                child: Text('UNIT: SPEC-OPS // $unit',
+                    style: const TextStyle(
+                        color: kAccent2,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5)),
+              ),
+            ),
+            Positioned(
+              bottom: 12,
+              left: 12,
+              child: Text('LOADOUT // ${p.startWeapon.name.toUpperCase()}',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.55),
+                      fontSize: 10,
+                      letterSpacing: 1,
+                      fontWeight: FontWeight.w700)),
+            ),
+            Positioned(
+              bottom: 12,
+              right: 12,
+              child: Row(
+                children: [
+                  Text('STATUS: READY',
+                      style: TextStyle(
+                          color: kSafeEdge.withValues(alpha: 0.9),
+                          fontSize: 10,
+                          letterSpacing: 1,
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(width: 6),
+                  Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                          color: kSafeEdge, shape: BoxShape.circle)),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1091,42 +1266,48 @@ class _StartOverlayState extends State<StartOverlay> {
   Widget _modeCard(int i) {
     final m = kMatchModes[i];
     final sel = _mode == i;
+    const icons = [Icons.groups, Icons.shield, Icons.military_tech];
     return GestureDetector(
       onTap: () => setState(() => _mode = i),
       child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
         decoration: BoxDecoration(
           color: sel
-              ? kAccent.withValues(alpha: 0.16)
-              : Colors.white.withValues(alpha: 0.05),
+              ? kAccent.withValues(alpha: 0.14)
+              : Colors.white.withValues(alpha: 0.04),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
               color: sel ? kAccent : Colors.white12, width: sel ? 2 : 1),
+          boxShadow: sel
+              ? [
+                  BoxShadow(
+                      color: kAccent.withValues(alpha: 0.3),
+                      blurRadius: 16,
+                      spreadRadius: -4)
+                ]
+              : null,
         ),
-        child: Row(
+        child: Column(
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(m.name,
-                      style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                          color: sel ? kAccent : Colors.white)),
-                  Text(m.tagline,
-                      style:
-                          const TextStyle(color: Colors.white54, fontSize: 12)),
-                ],
-              ),
-            ),
-            Text('${m.players}P',
+            Text(m.name.toUpperCase(),
+                textAlign: TextAlign.center,
                 style: TextStyle(
                     fontWeight: FontWeight.w900,
-                    fontSize: 18,
-                    color: sel ? kAccent : Colors.white70)),
+                    fontSize: 12,
+                    letterSpacing: 0.5,
+                    color: sel ? kAccent : Colors.white)),
+            const SizedBox(height: 10),
+            Icon(icons[i % icons.length],
+                color: sel ? kAccent : Colors.white54, size: 26),
+            const SizedBox(height: 10),
+            Text('${m.players} PLAYERS',
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 10,
+                    letterSpacing: 0.5,
+                    color: sel
+                        ? kAccent.withValues(alpha: 0.9)
+                        : Colors.white38)),
           ],
         ),
       ),

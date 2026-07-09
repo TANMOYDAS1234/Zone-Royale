@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../game/char_art.dart';
 import '../game/config.dart';
 import '../game/profile.dart';
+import '../game/royale_game.dart';
 import '../ui/game_ui.dart' show Joystick;
 import 'net_client.dart';
 
@@ -13,16 +14,18 @@ import 'net_client.dart';
 /// then the live networked arena once the socket is up. Push this with
 /// Navigator.push from the start menu's MULTIPLAYER button.
 class MultiplayerScreen extends StatefulWidget {
-  const MultiplayerScreen({super.key});
+  final RoyaleGame? game; // lets the bottom nav jump to real app sections
+  const MultiplayerScreen({super.key, this.game});
 
   @override
   State<MultiplayerScreen> createState() => _MultiplayerScreenState();
 }
 
 class _MultiplayerScreenState extends State<MultiplayerScreen> {
-  final _server = TextEditingController(text: 'ws://192.168.1.5:8080');
-  final _room = TextEditingController();
-  late final _name = TextEditingController(text: Profile.instance.name);
+  // Defaults to the live Render server — friends can just tap Connect.
+  final _server =
+      TextEditingController(text: 'wss://zone-royale.onrender.com');
+  final _room = TextEditingController(text: 'PUBLIC');
   NetClient? _client;
 
   @override
@@ -30,7 +33,6 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
     _client?.close();
     _server.dispose();
     _room.dispose();
-    _name.dispose();
     super.dispose();
   }
 
@@ -46,10 +48,12 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   Future<void> _connect() async {
     final url = _normalizeUrl(_server.text);
     if (url.isEmpty) return;
-    final name = _name.text.trim().isEmpty ? 'Player' : _name.text.trim();
+    final name =
+        Profile.instance.name.trim().isEmpty ? 'Player' : Profile.instance.name.trim();
+    final room = _room.text.trim() == 'PUBLIC' ? '' : _room.text.trim();
     final c = NetClient();
     setState(() => _client = c);
-    await c.connect(url, name, _room.text.trim());
+    await c.connect(url, name, room);
   }
 
   void _leave() {
@@ -61,7 +65,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   Widget build(BuildContext context) {
     final c = _client;
     return Scaffold(
-      backgroundColor: const Color(0xFF0E1116),
+      backgroundColor: const Color(0xFF05070C),
       body: SafeArea(
         child: c == null
             ? _form()
@@ -124,106 +128,309 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
     );
   }
 
+  // Dynamic protocol tag from the entered URL — honest status, not decoration.
+  String get _protocol {
+    final s = _server.text.trim();
+    if (s.startsWith('wss://')) return 'WSS_SECURE';
+    if (s.startsWith('ws://')) return 'WS_LOCAL';
+    return 'AUTO';
+  }
+
+  static const _mono = 'monospace';
+
   Widget _form() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              IconButton(
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
+    return Stack(
+      children: [
+        // tactical grid + faint recon icons behind everything
+        const Positioned.fill(
+            child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
+        Positioned(
+          top: 150,
+          right: 24,
+          child: Icon(Icons.storage_rounded,
+              size: 92, color: Colors.white.withValues(alpha: 0.05)),
+        ),
+        Positioned(
+          bottom: 120,
+          left: 12,
+          child: Icon(Icons.track_changes,
+              size: 150, color: Colors.white.withValues(alpha: 0.04)),
+        ),
+        Column(
+          children: [
+            // ---- header ----
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 10, 14, 6),
+              child: Row(
+                children: [
+                  GestureDetector(
+                    onTap: () => Navigator.of(context).maybePop(),
+                    child: const Icon(Icons.grid_view_rounded,
+                        color: kAccent, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text('ZONE ROYALE',
+                      style: TextStyle(
+                          color: kAccent,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1)),
+                  const Spacer(),
+                  Icon(Icons.settings,
+                      color: Colors.white.withValues(alpha: 0.6), size: 22),
+                ],
               ),
-              const SizedBox(width: 4),
-              const Text('MULTIPLAYER',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 2)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          const Padding(
-            padding: EdgeInsets.only(left: 4),
-            child: Text('Play live against real players on the same server.',
-                style: TextStyle(color: Colors.white54, fontSize: 13)),
-          ),
-          const SizedBox(height: 24),
-          _field('Server address', _server,
-              hint: 'ws://<PC-LAN-IP>:8080  or  wss://your-app.onrender.com'),
-          const SizedBox(height: 16),
-          _field('Room code (optional)', _room,
-              hint: 'Share a code with friends to land together'),
-          const SizedBox(height: 16),
-          _field('Your name', _name),
-          const SizedBox(height: 28),
-          ElevatedButton(
-            onPressed: _connect,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: kAccent,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
             ),
-            child: const Text('CONNECT & PLAY',
-                style:
-                    TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.04),
-              borderRadius: BorderRadius.circular(12),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 22),
+                    Center(
+                      child: Text('ESTABLISHING_UPLINK',
+                          style: TextStyle(
+                              fontFamily: _mono,
+                              color: kAccent,
+                              fontSize: 14,
+                              letterSpacing: 3)),
+                    ),
+                    const SizedBox(height: 8),
+                    const Center(
+                      child: Text('DEPLOYMENT_TERMINAL',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 28,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 1)),
+                    ),
+                    const SizedBox(height: 26),
+                    // ---- terminal card ----
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.03),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.08)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _termField('SERVER ADDRESS', _server,
+                              icon: Icons.dns_rounded),
+                          const SizedBox(height: 20),
+                          _termField('ROOM CODE', _room,
+                              icon: Icons.vpn_key_rounded),
+                          const SizedBox(height: 24),
+                          GestureDetector(
+                            onTap: _connect,
+                            child: Container(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 17),
+                              decoration: BoxDecoration(
+                                color: kAccent,
+                                borderRadius: BorderRadius.circular(14),
+                                boxShadow: [
+                                  BoxShadow(
+                                      color: kAccent.withValues(alpha: 0.4),
+                                      blurRadius: 22,
+                                      spreadRadius: -2),
+                                ],
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.wifi_tethering,
+                                      color: Colors.black, size: 20),
+                                  SizedBox(width: 12),
+                                  Text('CONNECT TO SERVER',
+                                      style: TextStyle(
+                                          color: Colors.black,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                          letterSpacing: 1)),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('PROTOCOL: $_protocol',
+                                  style: TextStyle(
+                                      fontFamily: _mono,
+                                      color: Colors.white.withValues(alpha: 0.35),
+                                      fontSize: 11,
+                                      letterSpacing: 1)),
+                              Text('LATENCY: -- MS',
+                                  style: TextStyle(
+                                      fontFamily: _mono,
+                                      color: Colors.white.withValues(alpha: 0.35),
+                                      fontSize: 11,
+                                      letterSpacing: 1)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Playing as ${Profile.instance.name}  ·  share the room code '
+                      'with friends to land in the same match.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.3),
+                          fontSize: 11,
+                          height: 1.5),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            child: const Text(
-              'Free LAN test: on your PC run  dart run bin/server.dart  in the '
-              'server/ folder, then enter  ws://<your-PC-IP>:8080  here (phone '
-              'and PC on the same Wi‑Fi). To play over the internet, deploy the '
-              'server to Render (free) and use its wss:// URL.',
-              style: TextStyle(
-                  color: Colors.white38, fontSize: 12, height: 1.45),
-            ),
-          ),
-        ],
-      ),
+            _bottomNav(),
+          ],
+        ),
+      ],
     );
   }
 
-  Widget _field(String label, TextEditingController ctrl, {String? hint}) {
+  Widget _termField(String label, TextEditingController ctrl,
+      {required IconData icon}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: const TextStyle(
-                color: Colors.white70,
+            style: TextStyle(
+                fontFamily: _mono,
+                color: Colors.white.withValues(alpha: 0.55),
                 fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 1)),
-        const SizedBox(height: 6),
-        TextField(
-          controller: ctrl,
-          style: const TextStyle(color: Colors.white, fontSize: 15),
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: const TextStyle(color: Colors.white24, fontSize: 12),
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.06),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                letterSpacing: 2,
+                fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          ),
+          child: Row(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 0, 8, 0),
+                child: Icon(icon,
+                    size: 18, color: Colors.white.withValues(alpha: 0.4)),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: ctrl,
+                  onChanged: (_) => setState(() {}), // refresh protocol tag
+                  style: TextStyle(
+                      fontFamily: _mono,
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 15),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
+
+  // Jump to a real app section: pop this route, then switch the menu screen.
+  void _goto(String screen) {
+    Navigator.of(context).maybePop();
+    widget.game?.screen.value = screen;
+  }
+
+  Widget _bottomNav() {
+    Widget item(IconData icon, String label, bool active, VoidCallback? onTap) {
+      final col = active ? kAccent : Colors.white.withValues(alpha: 0.4);
+      return Expanded(
+        child: GestureDetector(
+          onTap: active ? null : onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: active
+                ? BoxDecoration(
+                    color: kAccent.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(12))
+                : null,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: col, size: 22),
+                const SizedBox(height: 5),
+                Text(label,
+                    style: TextStyle(
+                        fontFamily: _mono,
+                        color: col,
+                        fontSize: 11,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.3),
+        border: Border(
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            // OPERATIONS = this live-play terminal (current)
+            item(Icons.track_changes, 'OPERATIONS', true, null),
+            // ARMORY = the Shop (guns / skins / gear)
+            item(Icons.military_tech, 'ARMORY', false,
+                () => _goto(Screen.shop)),
+            // FACTION = your operator identity / loadout
+            item(Icons.groups, 'FACTION', false,
+                () => _goto(Screen.profile)),
+            // INTEL = daily missions / objectives
+            item(Icons.storage_rounded, 'INTEL', false,
+                () => _goto(Screen.missions)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Faint tactical grid used behind terminal screens.
+class _GridPainter extends CustomPainter {
+  const _GridPainter();
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = Colors.white.withValues(alpha: 0.04)
+      ..strokeWidth = 1;
+    for (double x = 0; x < size.width; x += 46) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
+    }
+    for (double y = 0; y < size.height; y += 46) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
 /// The live arena: renders the server snapshot and streams input at ~30 Hz.
