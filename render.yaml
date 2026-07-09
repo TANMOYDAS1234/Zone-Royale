@@ -1,0 +1,21 @@
+# One-click deploy for the Zone Royale multiplayer server on Render.com (free).
+#
+# Steps:
+#   1. Push this repo to GitHub.
+#   2. On render.com -> "New +" -> "Blueprint" -> pick this repo.
+#   3. Render reads this file, builds the Docker image in /server, and gives you
+#      a public URL like  https://zone-royale.onrender.com
+#   4. In the app's MULTIPLAYER screen, enter:  wss://zone-royale.onrender.com
+#      (use wss:// — Render serves HTTPS/WSS; WebSockets work on the free tier).
+#
+# Note: the free instance sleeps after ~15 min idle; the first connection after
+# a sleep takes a few seconds to wake. Fine for testing and small matches.
+services:
+  - type: web
+    name: zone-royale
+    runtime: docker
+    plan: free
+    rootDir: server
+    dockerfilePath: Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
