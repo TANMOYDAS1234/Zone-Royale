@@ -8,7 +8,8 @@ a multiplayer server prototype included.
 
 ## Changelog (latest first)
 
-- **Customise control placement (BGMI-style)** — Profile → *Customise Control Placement* opens a drag editor; move/aim sticks, skill, grenade and reload float at your saved positions in-match (persisted). Grenade/reload leave the info row on touch and float freely.
+- **Pushed to GitHub** — full project at `github.com/TANMOYDAS1234/Zone-Royale` (ready for the Render Blueprint deploy).
+- **Customise control placement (BGMI-style)** — Profile → *Customise Control Placement* opens a drag editor; all six touch controls — move/aim sticks, skill, grenade, reload and the fire-mode toggle — float at your saved positions in-match (persisted). On touch they leave the info row and float freely; on desktop they stay in the row.
 - **Online multiplayer client** — MULTIPLAYER button → connect by server address + room code, live twin-stick arena rendering real players/bullets from server snapshots (`lib/net/`).
 - **Custom rooms** — server groups players by a shared room code (empty = `PUBLIC`); empty rooms auto-close.
 - **Render.com deploy** — `Dockerfile` + `render.yaml` for one-click free hosting; app connects via `wss://`.
@@ -128,7 +129,7 @@ lib/
     net_client.dart      NetClient — WebSocket connect, send input, parse snapshots
     net_arena.dart       MultiplayerScreen — connect form + live networked arena
   ui/
-    game_ui.dart         HUD, joysticks, minimap, overlays (Start/End/Profile/Missions/Shop)
+    game_ui.dart         HUD, floating touch controls, minimap, overlays, ControlsEditor (drag layout)
 tool/
   gen_sfx.dart           Bakes the procedural SFX to assets/sfx/*.wav
 assets/sfx/              10 tiny generated .wav sound effects
