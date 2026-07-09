@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -857,10 +858,11 @@ class _JoystickState extends State<Joystick> {
 // ============================================================
 //  Shared premium chrome: tactical header + bottom nav bar
 // ============================================================
-Widget metaHeader({String subtitle = 'OPERATIONS HUB'}) {
+Widget metaHeader(BuildContext context, {String subtitle = 'OPERATIONS HUB'}) {
   final p = Profile.instance;
   return Padding(
-    padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+    padding:
+        EdgeInsets.fromLTRB(16, 10 + MediaQuery.of(context).padding.top, 16, 6),
     child: Row(
       children: [
         const ZoneLogo(size: 42, tile: false),
@@ -1002,7 +1004,7 @@ class _StartOverlayState extends State<StartOverlay> {
       color: const Color(0xFF07090E),
       child: Column(
         children: [
-          metaHeader(subtitle: 'OPERATIONS HUB'),
+          metaHeader(context, subtitle: 'OPERATIONS HUB'),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -1433,94 +1435,202 @@ class EndOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final won = game.resultWon;
     final canSpectate = !won && game.aliveCount > 1;
+    final accent = won ? kAccent : kAccent2;
     return Container(
-      color: Colors.black.withValues(alpha: 0.62),
-      child: Center(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              RepaintBoundary(
-                key: _shotKey,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(28, 22, 28, 22),
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0xFF12182A), Color(0xFF05070C)],
+      color: const Color(0xFF07090E),
+      child: Column(
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                14, 10 + MediaQuery.of(context).padding.top, 14, 4),
+            child: Row(
+              children: [
+                GestureDetector(
+                    onTap: game.goHome,
+                    child: const Icon(Icons.arrow_back, color: Colors.white)),
+                const SizedBox(width: 10),
+                const Text('MATCH SUMMARY',
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              child: Column(
+                children: [
+                  RepaintBoundary(
+                    key: _shotKey,
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(20, 22, 20, 22),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            accent.withValues(alpha: 0.16),
+                            const Color(0xFF05070C)
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: accent.withValues(alpha: 0.4)),
+                      ),
+                      child: Column(
+                        children: [
+                          Text('ZONE ROYALE  //  ${won ? 'VICTORY' : 'DEFEAT'}',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  letterSpacing: 3,
+                                  fontWeight: FontWeight.w900,
+                                  color: accent)),
+                          const SizedBox(height: 10),
+                          Text(won ? '#1' : '#${game.resultPlacement}',
+                              style: TextStyle(
+                                  fontSize: 76,
+                                  fontWeight: FontWeight.w900,
+                                  color: accent,
+                                  height: 1)),
+                          Text(won ? 'WINNER WINNER' : 'ELIMINATED',
+                              style: TextStyle(
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2,
+                                  color: won ? Colors.white : accent)),
+                          Text(won ? 'CHICKEN DINNER' : 'ZONE SECTOR CLEARED',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  letterSpacing: 5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white.withValues(alpha: 0.5))),
+                          const SizedBox(height: 16),
+                          // the real 2D operator (honest — matches gameplay)
+                          Container(
+                            width: 130,
+                            height: 130,
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.3),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                  color: accent.withValues(alpha: 0.4)),
+                            ),
+                            child: CustomPaint(
+                              painter: OperatorPreviewPainter(
+                                outfit: Profile.instance.outfitColor,
+                                skin: Profile.instance.skinColor,
+                                accessory: Profile.instance.accessory,
+                                weapon: Profile.instance.startWeapon,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          _statsCard(),
+                          const SizedBox(height: 12),
+                          _rewardsCard(game),
+                        ],
+                      ),
                     ),
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('ZONE ROYALE',
+                  const SizedBox(height: 16),
+                  _DropButton(label: 'PLAY AGAIN', onTap: game.startMatch),
+                  if (canSpectate)
+                    TextButton(
+                      onPressed: game.spectate,
+                      child: const Text('SPECTATE',
                           style: TextStyle(
-                              fontSize: 13,
-                              letterSpacing: 3,
-                              fontWeight: FontWeight.w900,
-                              color: kAccent)),
-                      const SizedBox(height: 6),
-                      Text(won ? '#1' : '#${game.resultPlacement}',
-                          style: TextStyle(
-                              fontSize: 96,
-                              fontWeight: FontWeight.w900,
-                              color: won ? kAccent : Colors.white,
-                              height: 1)),
-                      Text(won ? 'WINNER WINNER!' : 'You were eliminated',
-                          style: const TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 6),
-                      Text(
-                          '${game.player.kills} kills · ${game.chars.length} players',
-                          style: const TextStyle(color: Colors.white54)),
-                      const SizedBox(height: 16),
-                      _rewardsCard(game),
-                    ],
-                  ),
-                ),
+                              color: Colors.white38, letterSpacing: 1)),
+                    ),
+                ],
               ),
-              const SizedBox(height: 18),
-              _DropButton(label: 'PLAY AGAIN', onTap: game.startMatch),
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: game.goHome,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 34, vertical: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(40),
-                    border: Border.all(color: Colors.white38),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.home_rounded, size: 18, color: Colors.white),
-                      SizedBox(width: 8),
-                      Text('HOME',
-                          style: TextStyle(
-                              fontWeight: FontWeight.w800, letterSpacing: 1)),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              TextButton.icon(
-                onPressed: () => _shareShot(context),
-                icon: const Icon(Icons.ios_share, size: 18, color: Colors.white70),
-                label: const Text('SHARE RESULT',
-                    style: TextStyle(color: Colors.white70, letterSpacing: 1)),
-              ),
-              if (canSpectate)
-                TextButton(
-                  onPressed: game.spectate,
-                  child: const Text('SPECTATE',
-                      style:
-                          TextStyle(color: Colors.white38, letterSpacing: 1)),
-                ),
-            ],
+            ),
           ),
+          // bottom action bar (HOME / SHARE)
+          Container(
+            decoration: const BoxDecoration(color: Color(0xFF0A0D13)),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                        child: _endAction(
+                            Icons.home_rounded, 'HOME', game.goHome)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                        child: _endAction(Icons.ios_share, 'SHARE',
+                            () => _shareShot(context))),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _endAction(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white12),
         ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 18, color: Colors.white70),
+            const SizedBox(width: 8),
+            Text(label,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                    color: Colors.white)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _statsCard() {
+    Widget stat(String k, String v) => Column(
+          children: [
+            Text(v,
+                style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white)),
+            const SizedBox(height: 2),
+            Text(k,
+                style: TextStyle(
+                    fontSize: 10,
+                    letterSpacing: 1,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white.withValues(alpha: 0.5))),
+          ],
+        );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          stat('KILLS', '${game.player.kills}'),
+          stat('PLAYERS', '${game.chars.length}'),
+          stat('RANK', Profile.instance.rank.toUpperCase()),
+        ],
       ),
     );
   }
@@ -1576,16 +1686,21 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
     _name = TextEditingController(text: Profile.instance.name);
   }
 
+  void _saveName() {
+    final n = _name.text.trim();
+    Profile.instance.name = n.isEmpty ? 'You' : n;
+    Profile.instance.save();
+  }
+
   @override
   void dispose() {
+    _saveName(); // persist edits when leaving via the bottom nav too
     _name.dispose();
     super.dispose();
   }
 
   void _close() {
-    final n = _name.text.trim();
-    Profile.instance.name = n.isEmpty ? 'You' : n;
-    Profile.instance.save();
+    _saveName();
     widget.game.screen.value = Screen.start;
   }
 
@@ -1593,22 +1708,37 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
   Widget build(BuildContext context) {
     final p = Profile.instance;
     return Container(
-      color: const Color(0xF2070A12),
-      child: SafeArea(
-        child: Column(
-          children: [
+      color: const Color(0xFF07090E),
+      child: Column(
+        children: [
+          metaHeader(context, subtitle: 'OPERATOR CONFIG'),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 6),
               child: Row(
                 children: [
-                  const Text('PROFILE',
+                  const Text('OPERATOR',
                       style: TextStyle(
-                          fontSize: 22,
+                          fontSize: 26,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
-                      onTap: _close, child: const Icon(Icons.close, size: 26)),
+                    onTap: _close,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: kAccent.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: kAccent),
+                      ),
+                      child: const Text('✓ SAVE',
+                          style: TextStyle(
+                              color: kAccent,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12)),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1686,14 +1816,16 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
                     const SizedBox(height: 18),
                     _stats(p),
                     const SizedBox(height: 18),
-                    Center(child: _DropButton(label: 'SAVE', onTap: _close)),
+                    Center(
+                        child: _DropButton(
+                            label: 'SAVE DEPLOYMENT PROFILE', onTap: _close)),
                   ],
                 ),
               ),
             ),
+            MetaNav(game: widget.game, active: Screen.profile),
           ],
         ),
-      ),
     );
   }
 
@@ -2060,136 +2192,217 @@ class MissionsOverlay extends StatefulWidget {
 }
 
 class _MissionsOverlayState extends State<MissionsOverlay> {
+  Timer? _tick;
+
   @override
   void initState() {
     super.initState();
     Profile.instance.ensureMissions();
+    // live countdown to the daily reset (next local midnight)
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
   }
 
   void _claim(int i) {
     if (Profile.instance.claimMission(i) != null) setState(() {});
   }
 
+  String _refreshIn() {
+    final now = DateTime.now();
+    final midnight = DateTime(now.year, now.month, now.day + 1);
+    final d = midnight.difference(now);
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.inHours)}:${two(d.inMinutes % 60)}:${two(d.inSeconds % 60)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = Profile.instance;
     return Container(
-      color: const Color(0xF2070A12),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Row(
-                children: [
-                  const Text('DAILY MISSIONS',
-                      style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1)),
-                  const Spacer(),
-                  Text('${p.coins} 🪙',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFFFFD36B))),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                      onTap: () => widget.game.screen.value = Screen.start,
-                      child: const Icon(Icons.close, size: 26)),
-                ],
-              ),
+      color: const Color(0xFF07090E),
+      child: Column(
+        children: [
+          metaHeader(context, subtitle: 'DAILY OPERATIONS'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text('DAILY MISSIONS',
+                    style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1)),
+                const Spacer(),
+                Icon(Icons.schedule,
+                    size: 15, color: Colors.white.withValues(alpha: 0.5)),
+                const SizedBox(width: 5),
+                Text('REFRESHES IN ${_refreshIn()}',
+                    style: TextStyle(
+                        fontFamily: 'monospace',
+                        color: Colors.white.withValues(alpha: 0.5),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1)),
+              ],
             ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  for (var i = 0; i < p.missions.length; i++)
-                    _missionCard(i, p.missions[i]),
-                  const SizedBox(height: 8),
-                  const Text('Missions refresh daily.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white38, fontSize: 12)),
-                ],
-              ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              children: [
+                for (var i = 0; i < p.missions.length; i++)
+                  _missionCard(i, p.missions[i]),
+              ],
             ),
-          ],
-        ),
+          ),
+          MetaNav(game: widget.game, active: Screen.missions),
+        ],
       ),
     );
   }
 
   Widget _missionCard(int i, Mission m) {
     final frac = (m.progress / m.target).clamp(0.0, 1.0);
+    final ready = m.done && !m.claimed;
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.white.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-            color: m.claimed
-                ? Colors.white10
-                : (m.done ? kAccent : Colors.white12)),
+            color: ready
+                ? kAccent
+                : (m.claimed ? Colors.white10 : Colors.white12),
+            width: ready ? 1.5 : 1),
+        boxShadow: ready
+            ? [
+                BoxShadow(
+                    color: kAccent.withValues(alpha: 0.18),
+                    blurRadius: 20,
+                    spreadRadius: -6)
+              ]
+            : null,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                  child: Text(m.desc,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 15))),
-              Text('+${m.rewardCoins}🪙  +${m.rewardXp}XP',
-                  style: const TextStyle(fontSize: 11, color: Colors.white54)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(5),
-                  child: LinearProgressIndicator(
-                    value: frac,
-                    minHeight: 8,
-                    backgroundColor: Colors.black38,
-                    valueColor: AlwaysStoppedAnimation(
-                        m.claimed ? Colors.white30 : kAccent),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(m.claimed
+                        ? 'MISSION COMPLETE'
+                        : (m.done ? 'OBJECTIVE CLEARED' : 'ACTIVE OBJECTIVE'),
+                        style: TextStyle(
+                            color: (m.claimed ? const Color(0xFF57E389) : kAccent)
+                                .withValues(alpha: 0.85),
+                            fontSize: 10,
+                            letterSpacing: 2,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 5),
+                    Text(m.desc,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            height: 1.25)),
+                  ],
                 ),
               ),
               const SizedBox(width: 10),
-              Text('${m.progress}/${m.target}',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700)),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: const Color(0xFFFFD36B).withValues(alpha: 0.5)),
+                ),
+                child: Text('🪙 ${m.rewardCoins}',
+                    style: const TextStyle(
+                        color: Color(0xFFFFD36B),
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12)),
+              ),
             ],
           ),
-          if (m.done && !m.claimed) ...[
-            const SizedBox(height: 10),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                  m.claimed
+                      ? 'MISSION COMPLETED'
+                      : (m.done ? 'READY TO CLAIM' : 'MISSION PROGRESS'),
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.5),
+                      fontSize: 10,
+                      letterSpacing: 1,
+                      fontWeight: FontWeight.w700)),
+              Text('${m.progress} / ${m.target}',
+                  style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.7),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(5),
+            child: LinearProgressIndicator(
+              value: frac,
+              minHeight: 9,
+              backgroundColor: Colors.black.withValues(alpha: 0.4),
+              valueColor: AlwaysStoppedAnimation(
+                  m.claimed ? const Color(0xFF57E389) : kAccent),
+            ),
+          ),
+          if (ready) ...[
+            const SizedBox(height: 14),
             GestureDetector(
               onTap: () => _claim(i),
               child: Container(
                 alignment: Alignment.center,
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 13),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                      colors: [Color(0xFFFFD36B), kAccent]),
-                  borderRadius: BorderRadius.circular(10),
+                  gradient:
+                      const LinearGradient(colors: [Color(0xFFFFD36B), kAccent]),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                        color: kAccent.withValues(alpha: 0.4),
+                        blurRadius: 16,
+                        spreadRadius: -3)
+                  ],
                 ),
-                child: const Text('CLAIM',
-                    style: TextStyle(
-                        color: Color(0xFF10131A), fontWeight: FontWeight.w900)),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('CLAIM REWARD',
+                        style: TextStyle(
+                            color: Color(0xFF10131A),
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                            letterSpacing: 1)),
+                    SizedBox(width: 8),
+                    Icon(Icons.card_giftcard,
+                        color: Color(0xFF10131A), size: 18),
+                  ],
+                ),
               ),
             ),
-          ],
-          if (m.claimed) ...[
-            const SizedBox(height: 8),
-            const Text('✓ CLAIMED',
-                style: TextStyle(
-                    color: Color(0xFF8FE07A),
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12)),
           ],
         ],
       ),
@@ -2246,56 +2459,71 @@ class _ShopOverlayState extends State<ShopOverlay> {
               '${kHeroes[i].name} — Top Form ★', 'e$i'),
     ];
     return Container(
-      color: const Color(0xF2070A12),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Row(
-                children: [
-                  const Text('SHOP',
-                      style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1)),
-                  const Spacer(),
-                  Text('${p.coins} 🪙',
+      color: const Color(0xFF07090E),
+      child: Column(
+        children: [
+          metaHeader(context, subtitle: 'SUPPLY HUB'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
+            child: Row(
+              children: [
+                const Text('ARMORY',
+                    style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1)),
+                const Spacer(),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFD36B).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: const Color(0xFFFFD36B).withValues(alpha: 0.5)),
+                  ),
+                  child: Text('🪙  ${p.coins}',
                       style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFFFFD36B))),
-                  const SizedBox(width: 12),
-                  GestureDetector(
-                      onTap: () => widget.game.screen.value = Screen.start,
-                      child: const Icon(Icons.close, size: 26)),
-                ],
-              ),
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFFFFD36B),
+                          fontSize: 14)),
+                ),
+              ],
             ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _section('HEROES', heroes),
-                  _section('EVOLUTIONS', evos),
-                  _section('SKINS', skins),
-                  _section('ACCESSORIES', accs),
-                  _section('WEAPONS', wpns),
-                  const Text('Buy once — then equip it in your Profile.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white38, fontSize: 12)),
-                ],
-              ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              children: [
+                _section('HEROES', heroes),
+                _section('EVOLUTIONS', evos),
+                _section('SKINS', skins),
+                _section('ACCESSORIES', accs),
+                _section('WEAPONS', wpns),
+                Text('Buy once — then equip it in your Profile.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.3),
+                        fontSize: 12)),
+              ],
             ),
-          ],
-        ),
+          ),
+          MetaNav(game: widget.game, active: Screen.shop),
+        ],
       ),
     );
   }
 
   Widget _dot(Color c) => Container(
-      width: 30,
-      height: 30,
-      decoration: BoxDecoration(color: c, shape: BoxShape.circle));
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: c,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(color: c.withValues(alpha: 0.5), blurRadius: 10)
+        ],
+      ));
 
   Widget _section(String title, List<Widget> items) {
     if (items.isEmpty) return const SizedBox.shrink();
@@ -2303,13 +2531,19 @@ class _ShopOverlayState extends State<ShopOverlay> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 8, top: 4),
-          child: Text(title,
-              style: const TextStyle(
-                  fontSize: 12,
-                  letterSpacing: 1.5,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white54)),
+          padding: const EdgeInsets.only(bottom: 10, top: 6),
+          child: Row(
+            children: [
+              Container(width: 4, height: 15, color: kAccent),
+              const SizedBox(width: 8),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      letterSpacing: 1.5,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white)),
+            ],
+          ),
         ),
         ...items,
         const SizedBox(height: 10),

@@ -8,6 +8,9 @@ a multiplayer server prototype included.
 
 ## Changelog (latest first)
 
+- **Full premium UI reskin** — every screen (Home, Missions/ARMORY, Shop, Profile/OPERATOR, Match Summary) matches the Stitch mockups: shared tactical header (crosshair logo + rank + coins), a unified bottom nav (HOME/SHOP/MISSIONS/PROFILE), animated boot splash, and the code-drawn crosshair logo. Character previews use the **real 2D operator** art (honest — no fake 3D renders).
+- **Fix: INTERNET permission** was missing from the release manifest, so multiplayer failed with "could not connect" on release APKs. Added to `android/app/src/main/AndroidManifest.xml`.
+- **Multiplayer terminal** — connect screen defaults to the live Render server (`wss://zone-royale.onrender.com`); ARMORY/FACTION/INTEL tabs route to Shop/Profile/Missions.
 - **Cold-start resilience** — connecting now wakes a sleeping free-tier host (HTTP pre-warm) and retries the socket up to 5× with a *"Waking the server…"* state, so multiplayer no longer fails on the first connect after the server sleeps. Guide documents a free keep-alive pinger.
 - **Pushed to GitHub** — full project at `github.com/TANMOYDAS1234/Zone-Royale` (ready for the Render Blueprint deploy).
 - **Customise control placement (BGMI-style)** — Profile → *Customise Control Placement* opens a drag editor; all six touch controls — move/aim sticks, skill, grenade, reload and the fire-mode toggle — float at your saved positions in-match (persisted). On touch they leave the info row and float freely; on desktop they stay in the row.
