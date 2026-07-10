@@ -454,6 +454,10 @@ class Room {
 
   void _spawnLoot() {
     loot.clear();
+    // If the host forced a single WEAPON TYPE, weapon crates would break that
+    // rule (you'd pick up a different gun), so only medkits drop.
+    final canDropGuns = allArms && weaponTable.isNotEmpty;
+    if (!canDropGuns && !allowMedkits) return; // nothing legal to drop
     final k = (obstacles.length * 0.7).round().clamp(6, 24);
     for (var i = 0; i < k; i++) {
       double x = 0, y = 0;
@@ -462,12 +466,11 @@ class Room {
         y = 60 + _rng.nextDouble() * (world - 120);
         if (!_blocksPlayer(x, y)) break;
       }
-      final wantMed = allowMedkits && (weaponTable.isEmpty || _rng.nextDouble() < 0.35);
+      final wantMed =
+          allowMedkits && (!canDropGuns || _rng.nextDouble() < 0.35);
       if (wantMed) {
         loot.add(Loot(_lootId++, x, y, 'm', -1, 0, 0, 0)); // medkit
-      } else if (weaponTable.isEmpty) {
-        continue; // nothing to drop
-      } else {
+      } else if (canDropGuns) {
         final w = weaponTable[_rng.nextInt(weaponTable.length)];
         loot.add(Loot(_lootId++, x, y, 'w', w['i'] as int, w['dmg'] as double,
             w['speed'] as double, w['range'] as double));

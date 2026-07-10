@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -15,6 +13,7 @@ import '../game/profile.dart';
 import '../game/royale_game.dart';
 import '../net/net_arena.dart';
 import 'brand.dart';
+import 'capture.dart';
 
 // ============================================================
 //  Reusable emblem (matches the app icon motif: closing zone)
@@ -625,72 +624,75 @@ class _ControlsEditorState extends State<ControlsEditor> {
               _token(s, 'reload', 120, 66, accent: kAccent, box: true),
               _token(s, 'fire', 64, 64, accent: kAccent, box: true),
               _token(s, 'hp', 150, 46, accent: const Color(0xFF52E06A), box: true),
-              // header
+              // header + tuning panel live at the TOP, where the screen is
+              // empty — the controls being tuned sit near the bottom.
               Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
                 child: SafeArea(
+                  bottom: false,
                   child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        IconButton(
-                          onPressed: () => Navigator.of(context).maybePop(),
-                          icon: const Icon(Icons.close, color: Colors.white),
+                        Row(
+                          children: [
+                            IconButton(
+                              onPressed: () => Navigator.of(context).maybePop(),
+                              icon:
+                                  const Icon(Icons.close, color: Colors.white),
+                            ),
+                            const SizedBox(width: 2),
+                            const Expanded(
+                              child: Text('DRAG TO PLACE YOUR CONTROLS',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 1,
+                                      fontSize: 14)),
+                            ),
+                            TextButton.icon(
+                              onPressed: _reset,
+                              icon: const Icon(Icons.restart_alt,
+                                  size: 18, color: Colors.white70),
+                              label: const Text('RESET',
+                                  style: TextStyle(color: Colors.white70)),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 4),
-                        const Expanded(
-                          child: Text('DRAG TO PLACE YOUR CONTROLS',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 1,
-                                  fontSize: 15)),
-                        ),
-                        TextButton.icon(
-                          onPressed: _reset,
-                          icon: const Icon(Icons.restart_alt,
-                              size: 18, color: Colors.white70),
-                          label: const Text('RESET',
-                              style: TextStyle(color: Colors.white70)),
-                        ),
+                        const SizedBox(height: 6),
+                        _tunePanel(),
                       ],
                     ),
                   ),
                 ),
               ),
-              // tuning panel + save bar
+              // save bar only — keeps the bottom clear for the controls
               Positioned(
                 bottom: 0,
                 left: 0,
                 right: 0,
                 child: SafeArea(
+                  top: false,
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _tunePanel(),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: _save,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: kSafeEdge,
-                              foregroundColor: Colors.black,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 15),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14)),
-                            ),
-                            child: const Text('SAVE LAYOUT',
-                                style: TextStyle(
-                                    fontSize: 16, fontWeight: FontWeight.w900)),
-                          ),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _save,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kSafeEdge,
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14)),
                         ),
-                      ],
+                        child: const Text('SAVE LAYOUT',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w900)),
+                      ),
                     ),
                   ),
                 ),
@@ -1459,26 +1461,21 @@ class EndOverlay extends StatelessWidget {
   // Capture the result card as a PNG and share it (BGMI/Free-Fire style),
   // falling back to a copied text result if the capture fails.
   Future<void> _shareShot(BuildContext context) async {
-    try {
-      // let the current frame finish so the boundary is definitely painted
-      await WidgetsBinding.instance.endOfFrame;
-      final ctx = _shotKey.currentContext;
-      if (ctx == null) throw StateError('no boundary');
-      // ignore: use_build_context_synchronously  (context re-read after the await)
-      final boundary = ctx.findRenderObject() as RenderRepaintBoundary;
-      if (boundary.debugNeedsPaint) {
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-      }
-      final image = await boundary.toImage(pixelRatio: 2.0);
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (data == null) throw StateError('capture failed');
-      final dir = await getTemporaryDirectory();
-      final file = await File('${dir.path}/zone_royale_result.png')
-          .writeAsBytes(data.buffer.asUint8List());
-      await SharePlus.instance.share(
-          ShareParams(files: [XFile(file.path)], text: _resultText()));
-    } catch (_) {
+    final png = await captureBoundary(_shotKey);
+    if (png == null) {
       if (context.mounted) await _share(context); // text-only fallback
+      return;
+    }
+    try {
+      final dir = await getTemporaryDirectory();
+      final file =
+          await File('${dir.path}/zone_royale_result.png').writeAsBytes(png);
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'image/png')],
+        text: _resultText(),
+      ));
+    } catch (_) {
+      if (context.mounted) await _share(context);
     }
   }
 

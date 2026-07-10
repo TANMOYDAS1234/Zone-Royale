@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -13,6 +11,7 @@ import '../game/char_art.dart';
 import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/royale_game.dart';
+import '../ui/capture.dart';
 import '../ui/game_ui.dart' show Joystick;
 import 'net_client.dart';
 
@@ -1202,23 +1201,16 @@ class _ArenaViewState extends State<_ArenaView>
     final txt = won
         ? '🏆 WINNER WINNER! I took the Zone Royale custom room — ${me.kills} kills. Beat that!'
         : '🔫 Zone Royale custom room — ${c.matchWinner} took it. ${me?.kills ?? 0} kills. Rematch?';
+    final png = await captureBoundary(_shotKey);
     try {
-      await WidgetsBinding.instance.endOfFrame;
-      final ctx = _shotKey.currentContext;
-      if (ctx == null) throw StateError('no boundary');
-      // ignore: use_build_context_synchronously  (context re-read after the await)
-      final boundary = ctx.findRenderObject() as RenderRepaintBoundary;
-      if (boundary.debugNeedsPaint) {
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-      }
-      final image = await boundary.toImage(pixelRatio: 2.0);
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (data == null) throw StateError('capture failed');
+      if (png == null) throw StateError('capture failed');
       final dir = await getTemporaryDirectory();
-      final file = await File('${dir.path}/zone_royale_room.png')
-          .writeAsBytes(data.buffer.asUint8List());
-      await SharePlus.instance
-          .share(ShareParams(files: [XFile(file.path)], text: txt));
+      final file =
+          await File('${dir.path}/zone_royale_room.png').writeAsBytes(png);
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'image/png')],
+        text: txt,
+      ));
     } catch (_) {
       await SharePlus.instance.share(ShareParams(text: txt)); // text fallback
     }
@@ -1645,6 +1637,15 @@ class _ArenaPainter extends CustomPainter {
     final camX = camPos.dx, camY = camPos.dy;
     final scale = size.height / kViewHeight;
 
+    // Everything outside the camera is culled — at 90Hz with ~54 obstacles and
+    // a 3200-unit world, drawing offscreen geometry was the main cost.
+    final halfW = size.width / (2 * scale) + 60;
+    final halfH = size.height / (2 * scale) + 60;
+    final vL = camX - halfW, vR = camX + halfW;
+    final vT = camY - halfH, vB = camY + halfH;
+    bool onScreen(double x, double y, [double m = 0]) =>
+        x > vL - m && x < vR + m && y > vT - m && y < vB + m;
+
     final fill = Paint()..style = PaintingStyle.fill;
     final stroke = Paint()
       ..style = PaintingStyle.stroke
@@ -1664,9 +1665,14 @@ class _ArenaPainter extends CustomPainter {
     final grid = Paint()
       ..color = Colors.white.withValues(alpha: 0.05)
       ..strokeWidth = 1;
-    for (double g = 0; g <= c.world; g += 400) {
-      canvas.drawLine(Offset(g, 0), Offset(g, c.world), grid);
-      canvas.drawLine(Offset(0, g), Offset(c.world, g), grid);
+    // only the grid lines crossing the view
+    final double g0 = ((vL / 400).floor() * 400).clamp(0.0, c.world).toDouble();
+    for (double g = g0; g <= vR && g <= c.world; g += 400) {
+      canvas.drawLine(Offset(g, vT), Offset(g, vB), grid);
+    }
+    final double h0 = ((vT / 400).floor() * 400).clamp(0.0, c.world).toDouble();
+    for (double g = h0; g <= vB && g <= c.world; g += 400) {
+      canvas.drawLine(Offset(vL, g), Offset(vR, g), grid);
     }
 
     // obstacles / cover (buildings)
@@ -1677,6 +1683,7 @@ class _ArenaPainter extends CustomPainter {
       ..strokeWidth = 2
       ..color = Colors.black.withValues(alpha: 0.5);
     for (final o in c.obstacles) {
+      if (!onScreen(o.x, o.y, o.w / 2 + o.h / 2)) continue;
       final rect = Rect.fromCenter(
           center: Offset(o.x, o.y), width: o.w, height: o.h);
       final rr = RRect.fromRectAndRadius(rect, const Radius.circular(5));
@@ -1691,6 +1698,7 @@ class _ArenaPainter extends CustomPainter {
 
     // loot pickups: weapon crates (gun-coloured box + icon) and medkits (green +)
     for (final l in c.loot) {
+      if (!onScreen(l.x, l.y, 30)) continue;
       final o = Offset(l.x, l.y);
       // soft glow so pickups are easy to spot
       canvas.drawCircle(o, 22,
@@ -1734,6 +1742,7 @@ class _ArenaPainter extends CustomPainter {
     final bg = Paint()..color = kAccent.withValues(alpha: 0.35);
     for (final b in c.bullets) {
       final o = b.at(age);
+      if (!onScreen(o.dx, o.dy, 20)) continue;
       canvas.drawCircle(o, 10, bg);
       canvas.drawCircle(o, 4.5, bp);
     }
@@ -1741,6 +1750,7 @@ class _ArenaPainter extends CustomPainter {
     // flying grenades (also extrapolated)
     for (final g in c.nades) {
       final o = g.at(age);
+      if (!onScreen(o.dx, o.dy, 24)) continue;
       canvas.drawCircle(
           o, 14, Paint()..color = const Color(0xFF6ABF5A).withValues(alpha: 0.25));
       canvas.drawCircle(o, 7, Paint()..color = const Color(0xFF2E7D32));
@@ -1770,6 +1780,7 @@ class _ArenaPainter extends CustomPainter {
       final hero = mine ? Profile.instance.hero : p.id % kHeroes.length;
 
       final pos = _posOf(p);
+      if (!onScreen(pos.dx, pos.dy, kPlayerRadius * 2)) continue;
       final aim = _aimOf(p);
 
       if (!p.alive) {
@@ -1805,8 +1816,9 @@ class _ArenaPainter extends CustomPainter {
     }
 
     // shrinking gas zone: gas fills everything outside the safe circle
+    // fill only the visible rect, not the whole world (huge overdraw saving)
     final gas = Path()
-      ..addRect(Rect.fromLTWH(-2000, -2000, c.world + 4000, c.world + 4000))
+      ..addRect(Rect.fromLTRB(vL - 40, vT - 40, vR + 40, vB + 40))
       ..addOval(Rect.fromCircle(
           center: Offset(c.zoneX, c.zoneY), radius: c.zoneR))
       ..fillType = PathFillType.evenOdd;
@@ -1824,6 +1836,7 @@ class _ArenaPainter extends CustomPainter {
     for (final p in c.players) {
       if (!p.alive || !p.ready) continue;
       final wp = _posOf(p);
+      if (!onScreen(wp.dx, wp.dy, kPlayerRadius * 2)) continue;
       final sx = (wp.dx - camX) * scale + size.width / 2;
       final sy = (wp.dy - camY) * scale + size.height / 2;
       final top = sy - kPlayerRadius * scale - 18;
