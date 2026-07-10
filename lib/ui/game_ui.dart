@@ -1333,20 +1333,25 @@ class _StartOverlayState extends State<StartOverlay> {
 // ============================================================
 class EndOverlay extends StatelessWidget {
   final RoyaleGame game;
-  final GlobalKey _shotKey = GlobalKey();
-  EndOverlay({super.key, required this.game});
+  // static so the key survives the parent's rebuilds — a fresh GlobalKey each
+  // build made `currentContext` stale and the share silently fell back to text.
+  static final GlobalKey _shotKey = GlobalKey();
+  const EndOverlay({super.key, required this.game});
 
   // Capture the result card as a PNG and share it (BGMI/Free-Fire style),
   // falling back to a copied text result if the capture fails.
   Future<void> _shareShot(BuildContext context) async {
-    final ctx = _shotKey.currentContext;
-    if (ctx == null) {
-      _share(context);
-      return;
-    }
     try {
+      // let the current frame finish so the boundary is definitely painted
+      await WidgetsBinding.instance.endOfFrame;
+      final ctx = _shotKey.currentContext;
+      if (ctx == null) throw StateError('no boundary');
+      // ignore: use_build_context_synchronously  (context re-read after the await)
       final boundary = ctx.findRenderObject() as RenderRepaintBoundary;
-      final image = await boundary.toImage(pixelRatio: 2.5);
+      if (boundary.debugNeedsPaint) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      }
+      final image = await boundary.toImage(pixelRatio: 2.0);
       final data = await image.toByteData(format: ui.ImageByteFormat.png);
       if (data == null) throw StateError('capture failed');
       final dir = await getTemporaryDirectory();
@@ -1359,7 +1364,7 @@ class EndOverlay extends StatelessWidget {
       await SharePlus.instance
           .share(ShareParams(files: [XFile(file.path)], text: txt));
     } catch (_) {
-      if (context.mounted) _share(context);
+      if (context.mounted) _share(context); // text fallback
     }
   }
 
@@ -2077,10 +2082,14 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
             ),
           ],
         ),
-        _slider('Stick size', p.stickScale, 0.8, 1.35,
-            (v) => setState(() => p.stickScale = v)),
-        _slider('Stick opacity', p.stickOpacity, 0.5, 1.4,
-            (v) => setState(() => p.stickOpacity = v)),
+        _slider('Stick size', p.stickScale, 0.8, 1.35, (v) {
+          setState(() => p.stickScale = v);
+          p.save(); // persist immediately so it applies to the next match
+        }),
+        _slider('Stick opacity', p.stickOpacity, 0.5, 1.4, (v) {
+          setState(() => p.stickOpacity = v);
+          p.save();
+        }),
         const SizedBox(height: 12),
         GestureDetector(
           onTap: () => Navigator.of(context).push(

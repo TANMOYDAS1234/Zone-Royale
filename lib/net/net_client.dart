@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -8,11 +9,11 @@ class NetPlayer {
   final int id;
   final double x, y, aim;
   final int hp, kills, wins, wi, nades, cd;
-  final bool alive, shield;
+  final bool alive, shield, dash;
   final String name;
   const NetPlayer(this.id, this.x, this.y, this.aim, this.hp, this.kills,
       this.wins, this.wi, this.nades, this.cd, this.alive, this.shield,
-      this.name);
+      this.dash, this.name);
 
   factory NetPlayer.from(Map m) => NetPlayer(
         (m['id'] as num).toInt(),
@@ -27,6 +28,7 @@ class NetPlayer {
         (m['cd'] as num?)?.toInt() ?? 0,
         m['alive'] == true,
         m['sh'] == true,
+        m['dsh'] == true,
         (m['name'] as String?) ?? '',
       );
 }
@@ -82,6 +84,52 @@ class NetClient {
   int hostId = 0;
   String? roundBanner; // e.g. "ROUND 1 — AVA WINS"
   String? matchWinner; // set when the match is decided
+
+  // room rules (host-controlled)
+  bool allowMedkits = true, allowGrenades = true, allowSkills = true;
+
+  // ---- snapshot interpolation (renders smoothly between server ticks) ----
+  final Map<int, List<double>> _prevP = {}; // id -> [x, y, aim]
+  final Map<int, List<double>> _currP = {};
+  int _snapAt = 0;
+  double _snapDt = 33;
+
+  /// Interpolated [x, y, aim] for a player, or null if unknown.
+  List<double>? lerpOf(int id) {
+    final cur = _currP[id];
+    if (cur == null) return null;
+    final pv = _prevP[id] ?? cur;
+    final t = ((DateTime.now().millisecondsSinceEpoch - _snapAt) / _snapDt)
+        .clamp(0.0, 1.0);
+    double a = pv[2], b = cur[2];
+    var d = b - a;
+    while (d > math.pi) {
+      d -= 2 * math.pi;
+    }
+    while (d < -math.pi) {
+      d += 2 * math.pi;
+    }
+    return [
+      pv[0] + (cur[0] - pv[0]) * t,
+      pv[1] + (cur[1] - pv[1]) * t,
+      a + d * t,
+    ];
+  }
+
+  void _recordSnapshot() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_snapAt != 0) {
+      _snapDt = (now - _snapAt).clamp(16, 250).toDouble();
+    }
+    _snapAt = now;
+    _prevP
+      ..clear()
+      ..addAll(_currP);
+    _currP.clear();
+    for (final p in players) {
+      _currP[p.id] = [p.x, p.y, p.aim];
+    }
+  }
 
   Map<String, dynamic>? _joinConfig;
   int _hero = 0;
@@ -180,6 +228,9 @@ class NetClient {
           round = (m['round'] as num?)?.toInt() ?? round;
           maxPlayers = (m['maxPlayers'] as num?)?.toInt() ?? maxPlayers;
           hostId = (m['host'] as num?)?.toInt() ?? hostId;
+          allowMedkits = m['medkit'] != false;
+          allowGrenades = m['grenades'] != false;
+          allowSkills = m['skills'] != false;
           final obs = m['obstacles'];
           if (obs is List) {
             obstacles = [
@@ -195,10 +246,10 @@ class NetClient {
           _bump();
           break;
         case 'round':
-          round = (m['round'] as num?)?.toInt() ?? round;
+          final r = (m['round'] as num?)?.toInt() ?? round;
           final name = (m['name'] as String?) ?? '—';
-          roundBanner = 'ROUND $round  —  $name WINS';
-          round += 1;
+          roundBanner = 'ROUND $r  —  $name WINS';
+          // banner clears itself when the next round starts (see 'state')
           _bump();
           break;
         case 'matchover':
@@ -206,10 +257,16 @@ class NetClient {
           roundBanner = null;
           _bump();
           break;
+        case 'full':
+          _fail('Room is full (${m['max']} players max).');
+          break;
         case 'state':
           players = [
             for (final p in (m['players'] as List)) NetPlayer.from(p as Map)
           ];
+          _recordSnapshot();
+          round = (m['round'] as num?)?.toInt() ?? round;
+          rounds = (m['rounds'] as num?)?.toInt() ?? rounds;
           bullets = [
             for (final b in (m['bullets'] as List))
               NetBullet((b['x'] as num).toDouble(), (b['y'] as num).toDouble())
@@ -239,10 +296,13 @@ class NetClient {
             zoneY = (z['y'] as num).toDouble();
             zoneR = (z['r'] as num).toDouble();
           }
-          // a fresh match cleared the winner banner
-          if (matchWinner != null && players.any((p) => p.wins == 0) &&
-              players.every((p) => p.alive)) {
-            matchWinner = null;
+          // everyone respawned => a new round started; clear the banners
+          final allAlive = players.isNotEmpty && players.every((p) => p.alive);
+          if (allAlive) {
+            roundBanner = null;
+            if (round == 1 && players.every((p) => p.wins == 0)) {
+              matchWinner = null;
+            }
           }
           _bump();
           break;

@@ -39,6 +39,8 @@ dependencies:
   audioplayers: ^6.7.1
   share_plus: ^13.2.0
   path_provider: ^2.1.6
+  # requests the display's highest refresh rate (90/120Hz) instead of 60Hz
+  flutter_displaymode: ^0.6.0
 
 dev_dependencies:
   flutter_test:
@@ -51,6 +53,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.1
+
 
 # ------------------------------------------------------------------
 # App launcher icon (run: dart run flutter_launcher_icons)

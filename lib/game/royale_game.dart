@@ -13,8 +13,8 @@ import 'mathx.dart';
 import 'profile.dart';
 import 'sfx.dart';
 
-const double kPlayerSpeed = 230;
-const double kBotSpeed = 208;
+const double kPlayerSpeed = 250;
+const double kBotSpeed = 226;
 const double kPickupRange = 28;
 
 /// Screens the surrounding Flutter UI switches between.

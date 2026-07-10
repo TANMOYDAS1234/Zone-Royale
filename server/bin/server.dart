@@ -18,8 +18,8 @@ import 'dart:io';
 import 'dart:math';
 
 const double worldSize = 3200;
-const int tickHz = 20;
-const double playerSpeed = 230;
+const int tickHz = 30; // higher tick = smoother motion for clients
+const double playerSpeed = 250;
 const double bulletSpeed = 900;
 const double bulletRange = 620;
 const double hitRadius = 24;
@@ -140,6 +140,10 @@ class Room {
   List<Map<String, dynamic>> weaponTable = []; // host sends the full gun table
   int startWi = 5;
   bool allArms = true; // when true each player keeps their own loadout weapon
+  // host-controlled rules
+  bool allowMedkits = true;
+  bool allowGrenades = true;
+  bool allowSkills = true;
   final List<Loot> loot = [];
   final List<Grenade> grenades = [];
 
@@ -187,8 +191,11 @@ class Room {
         y = 60 + _rng.nextDouble() * (world - 120);
         if (!_blocksPlayer(x, y)) break;
       }
-      if (weaponTable.isEmpty || _rng.nextDouble() < 0.35) {
+      final wantMed = allowMedkits && (weaponTable.isEmpty || _rng.nextDouble() < 0.35);
+      if (wantMed) {
         loot.add(Loot(_lootId++, x, y, 'm', -1, 0, 0, 0)); // medkit
+      } else if (weaponTable.isEmpty) {
+        continue; // nothing to drop
       } else {
         final w = weaponTable[_rng.nextInt(weaponTable.length)];
         loot.add(Loot(_lootId++, x, y, 'w', w['i'] as int, w['dmg'] as double,
@@ -224,6 +231,9 @@ class Room {
     maxPlayers = (cfg['maxPlayers'] as num?)?.toInt() ?? maxPlayers;
     rounds = ((cfg['rounds'] as num?)?.toInt() ?? rounds).clamp(1, 9);
     startWi = (cfg['startWi'] as num?)?.toInt() ?? startWi;
+    allowMedkits = cfg['medkit'] != false;
+    allowGrenades = cfg['grenades'] != false;
+    allowSkills = cfg['skills'] != false;
     final wl = cfg['weapons'];
     if (wl is List) {
       weaponTable = [
@@ -249,6 +259,9 @@ class Room {
         'round': roundNo,
         'maxPlayers': maxPlayers,
         'host': players.isNotEmpty ? players.first.id : 0,
+        'medkit': allowMedkits,
+        'grenades': allowGrenades,
+        'skills': allowSkills,
         'obstacles': [for (final o in obstacles) o.json],
       };
 
@@ -297,8 +310,8 @@ class Room {
     }
     p.fire = f;
 
-    // throw a grenade
-    if (m['nade'] == true && p.alive && !matchOver && p.grenades > 0) {
+    // throw a grenade (only if the room allows them)
+    if (allowGrenades && m['nade'] == true && p.alive && !matchOver && p.grenades > 0) {
       p.grenades--;
       grenades.add(Grenade(
         p.x + cos(p.aim) * hitRadius,
@@ -309,8 +322,8 @@ class Room {
         p.id,
       ));
     }
-    // activate the hero skill
-    if (m['skill'] == true && p.alive && !matchOver && p.skillCd <= 0) {
+    // activate the hero skill (only if the room allows skills)
+    if (allowSkills && m['skill'] == true && p.alive && !matchOver && p.skillCd <= 0) {
       _activateSkill(p);
     }
   }
@@ -361,7 +374,7 @@ class Room {
       p.bSpeed = bSpeed;
       p.bRange = bRange;
     }
-    p.grenades = 2;
+    p.grenades = allowGrenades ? 2 : 0;
     p.skillCd = 0;
     p.dashT = 0;
     p.shieldT = 0;
@@ -571,6 +584,7 @@ class Room {
               'wi': p.wi,
               'nades': p.grenades,
               'sh': p.shieldT > 0,
+              'dsh': p.dashT > 0,
               'cd': p.skillCd.clamp(0, 99).round(),
               'name': p.name,
             }
@@ -583,6 +597,8 @@ class Room {
         ],
         'loot': [for (final l in loot) l.json],
         'zone': {'x': zx.round(), 'y': zy.round(), 'r': zr.round()},
+        'round': roundNo,
+        'rounds': rounds,
       });
 
   void broadcast(Object msg) {
@@ -636,6 +652,16 @@ Future<void> main() async {
                   // The host (first player to create the room) sets the rules.
                   final cfg = m['config'];
                   if (cfg is Map) room.configure(cfg);
+                  // enforce the host's PLAYER LIMIT
+                  if (room.players.length >= room.maxPlayers) {
+                    try {
+                      ws.add(jsonEncode(
+                          {'type': 'full', 'max': room.maxPlayers}));
+                    } catch (_) {}
+                    if (room.players.isEmpty) rooms.remove(room.code);
+                    ws.close();
+                    return;
+                  }
                   p.roomRef = room;
                   room._spawn(p); // place inside the (possibly resized) arena
                   room.add(p);

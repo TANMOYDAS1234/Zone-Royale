@@ -1,7 +1,9 @@
 import 'package:flame/game.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_displaymode/flutter_displaymode.dart';
 
 import 'game/profile.dart';
 import 'game/royale_game.dart';
@@ -9,8 +11,40 @@ import 'game/sfx.dart';
 import 'ui/brand.dart';
 import 'ui/game_ui.dart';
 
+/// Refresh rate we aim for. 90 Hz is the sweet spot: clearly smoother than 60
+/// without the battery/thermal cost of 120 on a mid-range phone. Set to 60 for
+/// maximum battery life, or 120 to use the panel's full rate.
+const double kTargetRefreshHz = 90;
+
+/// Ask Android for the best refresh mode at or below [kTargetRefreshHz] — Flutter
+/// otherwise runs at the system default (often 60 Hz). Only considers modes at
+/// the *current* resolution so the screen size never changes. Android resets the
+/// preferred mode when the app is backgrounded, so this is re-applied on resume.
+Future<void> _useHighRefreshRate() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  try {
+    final supported = await FlutterDisplayMode.supported;
+    final active = await FlutterDisplayMode.active;
+    final sameRes = supported
+        .where((m) => m.width == active.width && m.height == active.height)
+        .toList();
+    if (sameRes.isEmpty) return;
+    // fastest mode that doesn't exceed the target; else the slowest available
+    DisplayMode? best;
+    for (final m in sameRes) {
+      if (m.refreshRate > kTargetRefreshHz + 0.5) continue;
+      if (best == null || m.refreshRate > best.refreshRate) best = m;
+    }
+    best ??= sameRes.reduce((a, b) => a.refreshRate < b.refreshRate ? a : b);
+    await FlutterDisplayMode.setPreferredMode(best);
+  } catch (_) {
+    // device doesn't support mode switching — stay at the default
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _useHighRefreshRate();
   await Profile.instance.load();
   Sfx.init(); // fire-and-forget: generates + loads sounds in the background
   // Edge-to-edge with transparent bars: the game fills the screen and stays
@@ -50,7 +84,7 @@ class GamePage extends StatefulWidget {
   State<GamePage> createState() => _GamePageState();
 }
 
-class _GamePageState extends State<GamePage> {
+class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
   late final RoyaleGame game;
   final FocusNode _focus = FocusNode();
   final Set<LogicalKeyboardKey> _keys = {};
@@ -60,10 +94,21 @@ class _GamePageState extends State<GamePage> {
   void initState() {
     super.initState();
     game = RoyaleGame();
+    WidgetsBinding.instance.addObserver(this);
+    // re-request after the window exists (the pre-runApp call can be too early)
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _useHighRefreshRate());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Android reverts to the system refresh rate when we're backgrounded
+    if (state == AppLifecycleState.resumed) _useHighRefreshRate();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _focus.dispose();
     super.dispose();
   }

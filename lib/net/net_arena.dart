@@ -1,7 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
+import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../game/char_art.dart';
 import '../game/config.dart';
@@ -21,7 +27,8 @@ class MultiplayerScreen extends StatefulWidget {
   State<MultiplayerScreen> createState() => _MultiplayerScreenState();
 }
 
-class _MultiplayerScreenState extends State<MultiplayerScreen> {
+class _MultiplayerScreenState extends State<MultiplayerScreen>
+    with WidgetsBindingObserver {
   // Defaults to the live Render server — friends can just tap Connect.
   final _server =
       TextEditingController(text: 'wss://zone-royale.onrender.com');
@@ -35,7 +42,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   int _sizeSel = 0; // index into kMatchModes (10 / 25 / 50)
   int _weaponSel = -1; // -1 = ALL_ARMS, else index into kWeaponOrder
   int _bo = 1; // best-of: 1 / 3 / 5
-  bool _medkit = true, _grenades = true, _drone = false;
+  bool _medkit = true, _grenades = true, _skills = true;
 
   static String _randomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -44,11 +51,36 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _client?.close();
     _server.dispose();
     _room.dispose();
     super.dispose();
+  }
+
+  /// Android suspends the app (and can drop the socket) when the screen turns
+  /// off. On resume, silently rejoin the same room instead of dumping the
+  /// player back to the menu.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final c = _client;
+    if (c != null && (c.status == 'closed' || c.status == 'error')) {
+      _connect(keepDeployed: _deployed);
+    }
+  }
+
+  /// Auto-join the shared PUBLIC room with the current rules.
+  Future<void> _quickMatch() async {
+    _room.text = 'PUBLIC';
+    await _connect();
   }
 
   String get _mapName =>
@@ -83,7 +115,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
       ],
       'medkit': _medkit,
       'grenades': _grenades,
-      'drone': _drone,
+      'skills': _skills,
     };
   }
 
@@ -95,17 +127,20 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
     return s;
   }
 
-  Future<void> _connect() async {
+  Future<void> _connect({bool keepDeployed = false}) async {
     final url = _normalizeUrl(_server.text);
     if (url.isEmpty) return;
     final name = Profile.instance.name.trim().isEmpty
         ? 'Player'
         : Profile.instance.name.trim();
     final room = _room.text.trim().isEmpty ? 'PUBLIC' : _room.text.trim();
+    // Close any existing socket first — otherwise RECONNECT leaves the old one
+    // open and the server sees a second (idle) copy of you in the room.
+    _client?.close();
     final c = NetClient();
     setState(() {
       _client = c;
-      _deployed = false;
+      if (!keepDeployed) _deployed = false;
     });
     await c.connect(url, name, room,
         config: _buildConfig(),
@@ -219,8 +254,22 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
                     fontWeight: FontWeight.w900,
                     letterSpacing: 1)),
             const Spacer(),
-            Icon(Icons.settings,
-                color: Colors.white.withValues(alpha: 0.6), size: 22),
+            GestureDetector(
+              onTap: () {
+                _client?.close();
+                Navigator.of(context).maybePop();
+              },
+              child: Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: const Icon(Icons.home_rounded,
+                    size: 20, color: Colors.white70),
+              ),
+            ),
           ],
         ),
       );
@@ -270,6 +319,9 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
                     const SizedBox(height: 18),
                     _bigButton(
                         Icons.rocket_launch, 'CREATE / JOIN ROOM', _connect),
+                    const SizedBox(height: 10),
+                    _ghostButton(Icons.public, 'QUICK MATCH  ·  JOIN PUBLIC',
+                        _quickMatch),
                     const SizedBox(height: 10),
                     Center(
                       child: Text('PROTOCOL: $_protocol   ·   HOST SETS THE RULES',
@@ -331,12 +383,12 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _toggleChip('MEDKIT_V1', _medkit,
+              _toggleChip('MEDKITS', _medkit,
                   () => setState(() => _medkit = !_medkit)),
               _toggleChip('GRENADES', _grenades,
                   () => setState(() => _grenades = !_grenades)),
-              _toggleChip('DRONE_INTEL', _drone,
-                  () => setState(() => _drone = !_drone)),
+              _toggleChip('HERO_SKILLS', _skills,
+                  () => setState(() => _skills = !_skills)),
             ],
           ),
           const SizedBox(height: 6),
@@ -927,13 +979,28 @@ class _ArenaView extends StatefulWidget {
   State<_ArenaView> createState() => _ArenaViewState();
 }
 
-class _ArenaViewState extends State<_ArenaView> {
+class _ArenaViewState extends State<_ArenaView>
+    with SingleTickerProviderStateMixin {
   Offset _move = Offset.zero; // left stick (-1..1)
   double _aim = 0; // last aim angle
   bool _fire = false;
   bool _nadeQ = false; // one-shot: throw a grenade next input
   bool _skillQ = false; // one-shot: activate the hero skill next input
   Timer? _pump;
+
+  // ---- client-side prediction (your own operator moves instantly) ----
+  double _selfX = 0, _selfY = 0;
+  bool _hasSelf = false;
+
+  // ---- per-frame ticker: drives prediction + interpolation at display rate ----
+  late final Ticker _ticker;
+  final ValueNotifier<int> _frame = ValueNotifier(0);
+  Duration _last = Duration.zero;
+
+  // ---- spectate / kill-cam ----
+  int _specIdx = 0;
+
+  static const double _speed = 250; // must match the server's playerSpeed
 
   @override
   void initState() {
@@ -945,13 +1012,84 @@ class _ArenaViewState extends State<_ArenaView> {
       _nadeQ = false;
       _skillQ = false;
     });
+    _ticker = createTicker(_onFrame)..start();
   }
 
   @override
   void dispose() {
     _pump?.cancel();
+    _ticker.dispose();
+    _frame.dispose();
     super.dispose();
   }
+
+  bool _blocked(double x, double y) {
+    for (final o in widget.client.obstacles) {
+      if ((x - o.x).abs() < o.w / 2 + 20 && (y - o.y).abs() < o.h / 2 + 20) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void _onFrame(Duration now) {
+    final dt = _last == Duration.zero
+        ? 1 / 60
+        : ((now - _last).inMicroseconds / 1e6).clamp(0.0, 0.05);
+    _last = now;
+    final c = widget.client;
+    final me = c.me;
+
+    if (me != null) {
+      if (!_hasSelf || !me.alive) {
+        _selfX = me.x;
+        _selfY = me.y;
+        _hasSelf = true;
+      } else {
+        // integrate our own input immediately (mirrors the server's sim)
+        var mx = _move.dx, my = _move.dy;
+        final len = math.sqrt(mx * mx + my * my);
+        if (len > 1) {
+          mx /= len;
+          my /= len;
+        }
+        final spd = _speed * (me.dash ? 1.8 : 1.0);
+        final nx = (_selfX + mx * spd * dt).clamp(20.0, c.world - 20);
+        final ny = (_selfY + my * spd * dt).clamp(20.0, c.world - 20);
+        if (!_blocked(nx, ny)) {
+          _selfX = nx;
+          _selfY = ny;
+        } else if (!_blocked(nx, _selfY)) {
+          _selfX = nx;
+        } else if (!_blocked(_selfX, ny)) {
+          _selfY = ny;
+        }
+        // reconcile with the authoritative position
+        final ex = me.x - _selfX, ey = me.y - _selfY;
+        final err = math.sqrt(ex * ex + ey * ey);
+        if (err > 70) {
+          _selfX = me.x; // teleport / respawn / big desync
+          _selfY = me.y;
+        } else if (err > 1.5) {
+          final k = (2.0 * dt).clamp(0.0, 1.0); // gentle pull, no lag
+          _selfX += ex * k;
+          _selfY += ey * k;
+        }
+      }
+    }
+    _frame.value++;
+  }
+
+  /// Who the camera follows: you while alive, otherwise a spectated player.
+  NetPlayer? _camTarget(NetClient c) {
+    final me = c.me;
+    if (me != null && me.alive) return me;
+    final alive = c.players.where((p) => p.alive).toList();
+    if (alive.isEmpty) return me;
+    return alive[_specIdx % alive.length];
+  }
+
+  void _cycleSpectate() => setState(() => _specIdx++);
 
   void _aimStick(Offset dir) {
     if (dir.distance > 0.2) {
@@ -961,6 +1099,175 @@ class _ArenaViewState extends State<_ArenaView> {
       _fire = false;
     }
   }
+
+  // ---- match over screen (shareable) ----
+  static final GlobalKey _shotKey = GlobalKey();
+
+  Future<void> _shareResult(NetClient c) async {
+    final me = c.me;
+    final won = c.matchWinner != null && me != null && me.name == c.matchWinner;
+    final txt = won
+        ? '🏆 WINNER WINNER! I took the Zone Royale custom room — ${me.kills} kills. Beat that!'
+        : '🔫 Zone Royale custom room — ${c.matchWinner} took it. ${me?.kills ?? 0} kills. Rematch?';
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      final ctx = _shotKey.currentContext;
+      if (ctx == null) throw StateError('no boundary');
+      // ignore: use_build_context_synchronously  (context re-read after the await)
+      final boundary = ctx.findRenderObject() as RenderRepaintBoundary;
+      if (boundary.debugNeedsPaint) {
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      }
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (data == null) throw StateError('capture failed');
+      final dir = await getTemporaryDirectory();
+      final file = await File('${dir.path}/zone_royale_room.png')
+          .writeAsBytes(data.buffer.asUint8List());
+      await SharePlus.instance
+          .share(ShareParams(files: [XFile(file.path)], text: txt));
+    } catch (_) {
+      await SharePlus.instance.share(ShareParams(text: txt)); // text fallback
+    }
+  }
+
+  Widget _matchOver(NetClient c, NetPlayer? me) {
+    final won = me != null && me.name == c.matchWinner;
+    final accent = won ? kAccent : kAccent2;
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.82),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  RepaintBoundary(
+                    key: _shotKey,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            accent.withValues(alpha: 0.18),
+                            const Color(0xFF05070C)
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: accent.withValues(alpha: 0.5)),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('ZONE ROYALE  //  CUSTOM ROOM',
+                              style: TextStyle(
+                                  fontFamily: _mono,
+                                  color: accent,
+                                  fontSize: 11,
+                                  letterSpacing: 2,
+                                  fontWeight: FontWeight.w900)),
+                          const SizedBox(height: 14),
+                          Text(won ? 'WINNER WINNER' : 'MATCH OVER',
+                              style: TextStyle(
+                                  color: won ? Colors.white : accent,
+                                  fontSize: 30,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2)),
+                          const SizedBox(height: 6),
+                          Text('${c.matchWinner} WINS'.toUpperCase(),
+                              style: TextStyle(
+                                  color: accent,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 1)),
+                          const SizedBox(height: 18),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _stat('KILLS', '${me?.kills ?? 0}'),
+                              _stat('ROUNDS WON', '${me?.wins ?? 0}'),
+                              _stat('PLAYERS', '${c.players.length}'),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                          child: _ghostBtn(Icons.ios_share, 'SHARE',
+                              () => _shareResult(c))),
+                      const SizedBox(width: 12),
+                      Expanded(
+                          child: _ghostBtn(
+                              Icons.logout, 'LEAVE ROOM', widget.onLeave)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text('Next match starts automatically…',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.4),
+                          fontSize: 11)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static const _mono = 'monospace';
+
+  Widget _stat(String k, String v) => Column(
+        children: [
+          Text(v,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900)),
+          const SizedBox(height: 2),
+          Text(k,
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 10,
+                  letterSpacing: 1,
+                  fontWeight: FontWeight.w700)),
+        ],
+      );
+
+  Widget _ghostBtn(IconData icon, String label, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 17, color: Colors.white70),
+              const SizedBox(width: 8),
+              Text(label,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                      fontSize: 13)),
+            ],
+          ),
+        ),
+      );
 
   Widget _actionButton(
       String icon, String label, Color color, bool ready, VoidCallback onTap) {
@@ -997,17 +1304,62 @@ class _ArenaViewState extends State<_ArenaView> {
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
+    // repaint every display frame (60/120 Hz) so prediction + interpolation
+    // render smoothly between the server's 30 Hz snapshots
     return AnimatedBuilder(
-      animation: c.rev,
+      animation: _frame,
       builder: (context, _) => _stack(c),
     );
   }
 
   Widget _stack(NetClient c) {
     final me = c.me;
+    final spectating = me != null && !me.alive && c.matchWinner == null;
+    final cam = _camTarget(c);
     return Stack(
       children: [
-        Positioned.fill(child: CustomPaint(painter: _ArenaPainter(c))),
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: spectating ? _cycleSpectate : null,
+            child: CustomPaint(
+              painter: _ArenaPainter(
+                c,
+                selfPos: _hasSelf && (me?.alive ?? false)
+                    ? Offset(_selfX, _selfY)
+                    : null,
+                selfAim: _aim,
+                camId: cam?.id ?? c.myId,
+              ),
+            ),
+          ),
+        ),
+        // spectate banner
+        if (spectating)
+          Positioned(
+            top: 60,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: Center(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: kSafeEdge.withValues(alpha: 0.6)),
+                  ),
+                  child: Text(
+                      'SPECTATING  ${(cam?.name ?? '—').toUpperCase()}   ·   TAP TO SWITCH',
+                      style: const TextStyle(
+                          color: kSafeEdge,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1)),
+                ),
+              ),
+            ),
+          ),
         // top HUD
         Positioned(
           top: 10,
@@ -1027,32 +1379,8 @@ class _ArenaViewState extends State<_ArenaView> {
             ],
           ),
         ),
-        // match over banner (takes priority)
-        if (c.matchWinner != null)
-          Positioned.fill(
-            child: IgnorePointer(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('MATCH OVER',
-                        style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 16,
-                            letterSpacing: 4,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
-                    Text('${c.matchWinner} WINS'.toUpperCase(),
-                        style: const TextStyle(
-                            color: kAccent,
-                            fontSize: 36,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 2)),
-                  ],
-                ),
-              ),
-            ),
-          )
+        // match over screen (takes priority) — shareable, like the solo end card
+        if (c.matchWinner != null) _matchOver(c, me)
         // round result banner
         else if (c.roundBanner != null)
           Positioned.fill(
@@ -1081,7 +1409,7 @@ class _ArenaViewState extends State<_ArenaView> {
               ),
             ),
           ),
-        // controls
+        // controls (respect the player's stick size / opacity settings)
         Positioned(
           left: 22,
           bottom: 28,
@@ -1089,6 +1417,8 @@ class _ArenaViewState extends State<_ArenaView> {
             onChange: (d) => _move = d,
             onRelease: () => _move = Offset.zero,
             accent: kSafeEdge,
+            size: 132 * Profile.instance.stickScale,
+            opacity: Profile.instance.stickOpacity,
           ),
         ),
         Positioned(
@@ -1098,6 +1428,8 @@ class _ArenaViewState extends State<_ArenaView> {
             onChange: _aimStick,
             onRelease: () => _fire = false,
             accent: kAccent2,
+            size: 132 * Profile.instance.stickScale,
+            opacity: Profile.instance.stickOpacity,
           ),
         ),
         // grenade + skill action buttons (above the aim stick)
@@ -1144,7 +1476,23 @@ class _ArenaViewState extends State<_ArenaView> {
 
 class _ArenaPainter extends CustomPainter {
   final NetClient c;
-  _ArenaPainter(this.c);
+  final Offset? selfPos; // client-predicted position of your own operator
+  final double selfAim;
+  final int camId; // who the camera follows (you, or a spectated player)
+  _ArenaPainter(this.c, {this.selfPos, this.selfAim = 0, required this.camId});
+
+  /// Smoothed world position: predicted for you, interpolated for everyone else.
+  Offset _posOf(NetPlayer p) {
+    if (p.id == c.myId && selfPos != null) return selfPos!;
+    final l = c.lerpOf(p.id);
+    return l == null ? Offset(p.x, p.y) : Offset(l[0], l[1]);
+  }
+
+  double _aimOf(NetPlayer p) {
+    if (p.id == c.myId && selfPos != null) return selfAim;
+    final l = c.lerpOf(p.id);
+    return l == null ? p.aim : l[2];
+  }
 
   // Ground tint per selected room map — so the host's map choice is visible.
   static Color _groundFor(String map) {
@@ -1168,9 +1516,13 @@ class _ArenaPainter extends CustomPainter {
     // background (tinted by the room's chosen map)
     canvas.drawRect(Offset.zero & size, Paint()..color = _groundFor(c.map));
 
-    final me = c.me;
-    final camX = me?.x ?? c.world / 2;
-    final camY = me?.y ?? c.world / 2;
+    // camera follows the (predicted/interpolated) target — you, or a spectatee
+    NetPlayer? camP;
+    for (final p in c.players) {
+      if (p.id == camId) camP = p;
+    }
+    final camPos = camP == null ? Offset(c.world / 2, c.world / 2) : _posOf(camP);
+    final camX = camPos.dx, camY = camPos.dy;
     final scale = size.height / kViewHeight;
 
     final fill = Paint()..style = PaintingStyle.fill;
@@ -1293,23 +1645,24 @@ class _ArenaPainter extends CustomPainter {
       final weapon = WeaponId.values[p.wi.clamp(0, WeaponId.values.length - 1)];
       final hero = mine ? Profile.instance.hero : p.id % kHeroes.length;
 
+      final pos = _posOf(p);
+      final aim = _aimOf(p);
+
       if (!p.alive) {
         // faint fallen marker
-        canvas.drawCircle(Offset(p.x, p.y), kPlayerRadius * 0.9,
+        canvas.drawCircle(pos, kPlayerRadius * 0.9,
             Paint()..color = Colors.black.withValues(alpha: 0.35));
         continue;
       }
-      drawOperator(canvas, Offset(p.x, p.y), kPlayerRadius, p.aim, p.aim,
-          outfit, skin, accessory, weapon,
+      drawOperator(canvas, pos, kPlayerRadius, aim, aim, outfit, skin,
+          accessory, weapon,
           fill: fill, stroke: stroke, walk: 0, hero: hero);
 
       if (p.shield) {
-        canvas.drawCircle(
-            Offset(p.x, p.y),
-            kPlayerRadius * 1.5,
+        canvas.drawCircle(pos, kPlayerRadius * 1.5,
             Paint()..color = kSafeEdge.withValues(alpha: 0.18));
         canvas.drawCircle(
-            Offset(p.x, p.y),
+            pos,
             kPlayerRadius * 1.5,
             Paint()
               ..style = PaintingStyle.stroke
@@ -1318,7 +1671,7 @@ class _ArenaPainter extends CustomPainter {
       }
       if (mine) {
         canvas.drawCircle(
-            Offset(p.x, p.y),
+            pos,
             kPlayerRadius * 1.7,
             Paint()
               ..style = PaintingStyle.stroke
@@ -1346,8 +1699,9 @@ class _ArenaPainter extends CustomPainter {
     // screen-space overlays: names + hp bars
     for (final p in c.players) {
       if (!p.alive) continue;
-      final sx = (p.x - camX) * scale + size.width / 2;
-      final sy = (p.y - camY) * scale + size.height / 2;
+      final wp = _posOf(p);
+      final sx = (wp.dx - camX) * scale + size.width / 2;
+      final sy = (wp.dy - camY) * scale + size.height / 2;
       final top = sy - kPlayerRadius * scale - 18;
       // hp bar
       const w = 46.0;
