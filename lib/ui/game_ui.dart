@@ -2272,6 +2272,90 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
 }
 
 // Draws the customized operator into a widget (start screen + profile preview).
+/// Shop tile art: a tactical frame + the item rendered with the real in-game
+/// `drawOperator` routine (hero gear, outfit, accessory, gun all show through).
+class _ShopThumbPainter extends CustomPainter {
+  final Color accent, outfit, skin;
+  final int accessory, hero;
+  final WeaponId weapon;
+  final bool evolved, gunOnly;
+  _ShopThumbPainter({
+    required this.accent,
+    required this.outfit,
+    required this.skin,
+    required this.accessory,
+    required this.weapon,
+    required this.hero,
+    required this.evolved,
+    required this.gunOnly,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final c = size.center(Offset.zero);
+    final rr = RRect.fromRectAndRadius(rect, const Radius.circular(12));
+
+    // frame: dark tile, accent glow, accent border
+    canvas.drawRRect(rr, Paint()..color = const Color(0xFF12161E));
+    canvas.drawCircle(
+      c,
+      size.width * 0.52,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [accent.withValues(alpha: 0.30), Colors.transparent],
+        ).createShader(Rect.fromCircle(center: c, radius: size.width * 0.52)),
+    );
+    canvas.drawRRect(
+        rr,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..color = accent.withValues(alpha: 0.65));
+
+    final fill = Paint()..style = PaintingStyle.fill;
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+
+    canvas.save();
+    canvas.clipRRect(rr);
+    if (gunOnly) {
+      // weapon tiles: zoom in on the gun, angled so the silhouette reads
+      canvas.translate(c.dx, c.dy);
+      canvas.rotate(-0.45);
+      canvas.scale(1.35);
+      canvas.translate(-c.dx * 0.42, 0);
+      drawOperator(canvas, Offset.zero, size.width * 0.30, 0, 0, outfit, skin,
+          0, weapon,
+          fill: fill, stroke: stroke, hero: -1);
+    } else {
+      // character tiles: face up so the head/accessory/hero gear is visible
+      drawOperator(canvas, c, size.width * 0.30, -math.pi / 2, -math.pi / 2,
+          outfit, skin, accessory, weapon,
+          fill: fill, stroke: stroke, hero: hero);
+    }
+    canvas.restore();
+
+    if (evolved) {
+      final tp = TextPainter(
+        text: const TextSpan(
+            text: '★', style: TextStyle(color: Color(0xFFFFD36B), fontSize: 14)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(size.width - tp.width - 4, 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShopThumbPainter old) =>
+      old.outfit != outfit ||
+      old.hero != hero ||
+      old.weapon != weapon ||
+      old.accessory != accessory ||
+      old.evolved != evolved;
+}
+
 class OperatorPreviewPainter extends CustomPainter {
   final Color outfit;
   final Color skin;
@@ -2557,11 +2641,19 @@ class _ShopOverlayState extends State<ShopOverlay> {
   @override
   Widget build(BuildContext context) {
     final p = Profile.instance;
+    // Every tile renders the real operator art with that item applied, so the
+    // preview is exactly what you'll look like in a match.
     final skins = [
       for (var i = 0; i < kOutfitColors.length; i++)
         if (!Profile.isFree('o$i'))
           _item(
-            _dot(Color(kOutfitColors[i])),
+            _thumb(
+              accent: Color(kOutfitColors[i]),
+              outfit: Color(kOutfitColors[i]),
+              accessory: p.accessory,
+              weapon: p.startWeapon,
+              hero: p.hero,
+            ),
             'Skin ${i + 1}',
             'o$i',
           ),
@@ -2569,24 +2661,56 @@ class _ShopOverlayState extends State<ShopOverlay> {
     final accs = [
       for (var i = 0; i < kAccessoryNames.length; i++)
         if (!Profile.isFree('a$i'))
-          _item(_dot(const Color(0xFF6A7A9A)), kAccessoryNames[i], 'a$i'),
+          _item(
+            _thumb(
+              accent: const Color(0xFF7FA6D8),
+              accessory: i,
+              weapon: p.startWeapon,
+              hero: p.hero,
+            ),
+            kAccessoryNames[i],
+            'a$i',
+          ),
     ];
     final wpns = [
       for (final w in kWeaponOrder)
         if (!Profile.isFree('w${w.index}'))
-          _item(_dot(kWeapons[w]!.color), kWeapons[w]!.name, 'w${w.index}'),
+          _item(
+            _thumb(accent: kWeapons[w]!.color, weapon: w, gunOnly: true),
+            kWeapons[w]!.name,
+            'w${w.index}',
+          ),
     ];
     final heroes = [
       for (var i = 0; i < kHeroes.length; i++)
         if (!Profile.isFree('h$i'))
-          _item(_dot(Color(kHeroes[i].color)),
-              '${kHeroes[i].name} · ${kHeroes[i].desc.split(' — ').first}', 'h$i'),
+          _item(
+            _thumb(
+              accent: Color(kHeroes[i].color),
+              outfit: Color(kHeroes[i].color),
+              accessory: p.accessory,
+              weapon: p.startWeapon,
+              hero: i,
+            ),
+            '${kHeroes[i].name} · ${kHeroes[i].desc.split(' — ').first}',
+            'h$i',
+          ),
     ];
     final evos = [
       for (var i = 0; i < kHeroes.length; i++)
         if (p.heroOwned(i))
-          _item(_dot(Color(kHeroes[i].color)),
-              '${kHeroes[i].name} — Top Form ★', 'e$i'),
+          _item(
+            _thumb(
+              accent: Color(kHeroes[i].color),
+              outfit: Color(kHeroes[i].color),
+              accessory: p.accessory,
+              weapon: p.startWeapon,
+              hero: i,
+              evolved: true,
+            ),
+            '${kHeroes[i].name} — Top Form ★',
+            'e$i',
+          ),
     ];
     return Container(
       color: const Color(0xFF07090E),
@@ -2644,16 +2768,37 @@ class _ShopOverlayState extends State<ShopOverlay> {
     );
   }
 
-  Widget _dot(Color c) => Container(
-      width: 34,
-      height: 34,
-      decoration: BoxDecoration(
-        color: c,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(color: c.withValues(alpha: 0.5), blurRadius: 10)
-        ],
-      ));
+  /// A real preview of the item — the same `drawOperator` art you play as,
+  /// framed in a tactical tile. Beats a coloured dot, and it's honest: what you
+  /// see here is exactly what you'll look like in a match.
+  Widget _thumb({
+    required Color accent,
+    Color? outfit,
+    Color? skin,
+    int accessory = 0,
+    WeaponId weapon = WeaponId.smg,
+    int hero = -1,
+    bool evolved = false,
+    bool gunOnly = false,
+  }) {
+    final p = Profile.instance;
+    return SizedBox(
+      width: 54,
+      height: 54,
+      child: CustomPaint(
+        painter: _ShopThumbPainter(
+          accent: accent,
+          outfit: outfit ?? p.outfitColor,
+          skin: skin ?? p.skinColor,
+          accessory: accessory,
+          weapon: weapon,
+          hero: hero,
+          evolved: evolved,
+          gunOnly: gunOnly,
+        ),
+      ),
+    );
+  }
 
   Widget _section(String title, List<Widget> items) {
     if (items.isEmpty) return const SizedBox.shrink();

@@ -492,9 +492,10 @@ class Room {
     return false;
   }
 
-  // First player to create the room is the host and sets the rules.
+  /// Applies the host's rules. Called only when the first human enters an
+  /// empty room, so a late joiner can never overwrite the host's settings —
+  /// but a host who leaves and comes back with new settings gets them applied.
   void configure(Map cfg) {
-    if (configured) return;
     world = (cfg['world'] as num?)?.toDouble() ?? world;
     dmg = (cfg['dmg'] as num?)?.toDouble() ?? dmg;
     bSpeed = (cfg['bulletSpeed'] as num?)?.toDouble() ?? bSpeed;
@@ -512,6 +513,9 @@ class Room {
     botTarget = ((cfg['botTarget'] as num?)?.toInt() ?? botTarget).clamp(2, 30);
     botDifficulty =
         ((cfg['botDifficulty'] as num?)?.toInt() ?? botDifficulty).clamp(0, 2);
+    // the arena depends on `map` and `world`, so rebuild it with the new rules
+    obstacles.clear();
+    loot.clear();
     final wl = cfg['weapons'];
     if (wl is List) {
       weaponTable = [
@@ -970,11 +974,19 @@ Future<void> main() async {
                   final room = m['quick'] == true
                       ? pickPublicRoom()
                       : roomFor((m['room'] as String?) ?? '');
-                  // The host (first player into the room) sets the rules. For
-                  // quick match every client sends the same standard ruleset,
-                  // so the outcome is identical regardless of who arrives first.
+                  // The host is whoever enters an empty room; only they set the
+                  // rules, so a late joiner can't overwrite them. Reconnecting
+                  // into an empty room re-applies your latest settings.
                   final cfg = m['config'];
-                  if (cfg is Map) room.configure(cfg);
+                  if (cfg is Map && room.humans == 0) {
+                    room.configure(cfg);
+                    print('  room "${room.code}" configured: map=${room.map} '
+                        'gun=${room.weapon} rounds=${room.rounds} '
+                        'limit=${room.maxPlayers} bots=${room.fillBots}'
+                        '/${room.botTarget}/d${room.botDifficulty} '
+                        'med=${room.allowMedkits} nade=${room.allowGrenades} '
+                        'skill=${room.allowSkills}');
+                  }
                   // enforce the host's PLAYER LIMIT (bots don't take slots)
                   if (room.humans >= room.maxPlayers) {
                     try {

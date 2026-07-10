@@ -412,11 +412,16 @@ class NetClient {
 
   void _bump() => rev.value++;
 
-  void close() {
-    try {
-      _ws?.close();
-    } catch (_) {}
+  /// Awaits the close handshake. This matters: if we reconnect before the
+  /// server has processed our disconnect, the old room still has us in it, so
+  /// it is reused and the new settings are ignored.
+  Future<void> close() async {
+    final ws = _ws;
     _ws = null;
     connected = false;
+    if (ws == null) return;
+    try {
+      await ws.close().timeout(const Duration(seconds: 2));
+    } catch (_) {}
   }
 }

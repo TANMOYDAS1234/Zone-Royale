@@ -171,9 +171,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
         ? 'Player'
         : Profile.instance.name.trim();
     final room = _room.text.trim().isEmpty ? 'PUBLIC' : _room.text.trim();
-    // Close any existing socket first — otherwise RECONNECT leaves the old one
-    // open and the server sees a second (idle) copy of you in the room.
-    _client?.close();
+    // Close the old socket AND wait for it — otherwise the server still counts
+    // us in the old room, reuses it, and silently ignores our new settings.
+    await _client?.close();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
     final c = NetClient();
     setState(() {
       _client = c;
@@ -1147,14 +1148,17 @@ class _ArenaViewState extends State<_ArenaView>
         } else if (!_blocked(_selfX, ny)) {
           _selfY = ny;
         }
-        // reconcile with the authoritative position
+        // Reconcile with the authoritative position. Converge faster when the
+        // stick is released, otherwise the server's in-flight inputs keep
+        // dragging us forward and the operator visibly slides after let-go.
         final ex = me.x - _selfX, ey = me.y - _selfY;
         final err = math.sqrt(ex * ex + ey * ey);
         if (err > 70) {
           _selfX = me.x; // teleport / respawn / big desync
           _selfY = me.y;
-        } else if (err > 1.5) {
-          final k = (2.0 * dt).clamp(0.0, 1.0); // gentle pull, no lag
+        } else if (err > 0.5) {
+          final idle = _move.distance < 0.01;
+          final k = ((idle ? 12.0 : 6.0) * dt).clamp(0.0, 1.0);
           _selfX += ex * k;
           _selfY += ey * k;
         }
@@ -1513,13 +1517,18 @@ class _ArenaViewState extends State<_ArenaView>
               ),
             ),
           ),
-        // controls — each honours its own size/opacity from the Controls editor
+        // Controls carry stable keys: banners above them come and go, which
+        // shifts child indices — without a key Flutter rebuilds the Joystick's
+        // State mid-drag, onRelease never fires, and the stick sticks (the
+        // "character moves by itself" bug).
         Positioned(
+          key: const ValueKey('ctl-move'),
           left: 22,
           bottom: 28,
           child: _sized(
             'move',
             Joystick(
+              key: const ValueKey('js-move'),
               onChange: (d) => _move = d,
               onRelease: () => _move = Offset.zero,
               accent: kSafeEdge,
@@ -1527,11 +1536,13 @@ class _ArenaViewState extends State<_ArenaView>
           ),
         ),
         Positioned(
+          key: const ValueKey('ctl-aim'),
           right: 22,
           bottom: 28,
           child: _sized(
             'aim',
             Joystick(
+              key: const ValueKey('js-aim'),
               onChange: _aimStick,
               onRelease: () => _fire = false,
               accent: kAccent2,
@@ -1540,6 +1551,7 @@ class _ArenaViewState extends State<_ArenaView>
         ),
         // grenade + skill action buttons (above the aim stick)
         Positioned(
+          key: const ValueKey('ctl-nade'),
           right: 30,
           bottom: 200,
           child: _sized(
@@ -1551,6 +1563,7 @@ class _ArenaViewState extends State<_ArenaView>
           ),
         ),
         Positioned(
+          key: const ValueKey('ctl-skill'),
           right: 108,
           bottom: 200,
           child: _sized(
@@ -1593,17 +1606,25 @@ class _ArenaPainter extends CustomPainter {
   final int camId; // who the camera follows (you, or a spectated player)
   _ArenaPainter(this.c, {this.selfPos, this.selfAim = 0, required this.camId});
 
-  /// Smoothed world position: predicted for you, interpolated for everyone else.
-  Offset _posOf(NetPlayer p) {
-    if (p.id == c.myId && selfPos != null) return selfPos!;
-    final l = c.lerpOf(p.id);
-    return l == null ? Offset(p.x, p.y) : Offset(l[0], l[1]);
-  }
+  // Smoothed world transforms, computed once per frame: predicted for you,
+  // interpolated for everyone else. (Recomputing per draw call meant 3x the
+  // work and 3x the allocations for every player, every frame.)
+  final Map<int, Offset> _pos = {};
+  final Map<int, double> _aims = {};
 
-  double _aimOf(NetPlayer p) {
-    if (p.id == c.myId && selfPos != null) return selfAim;
-    final l = c.lerpOf(p.id);
-    return l == null ? p.aim : l[2];
+  void _resolveTransforms() {
+    _pos.clear();
+    _aims.clear();
+    for (final p in c.players) {
+      if (p.id == c.myId && selfPos != null) {
+        _pos[p.id] = selfPos!;
+        _aims[p.id] = selfAim;
+        continue;
+      }
+      final l = c.lerpOf(p.id);
+      _pos[p.id] = l == null ? Offset(p.x, p.y) : Offset(l[0], l[1]);
+      _aims[p.id] = l == null ? p.aim : l[2];
+    }
   }
 
   // Ground tint per selected room map — so the host's map choice is visible.
@@ -1628,12 +1649,10 @@ class _ArenaPainter extends CustomPainter {
     // background (tinted by the room's chosen map)
     canvas.drawRect(Offset.zero & size, Paint()..color = _groundFor(c.map));
 
+    _resolveTransforms(); // one interpolation pass per frame, not per draw
+
     // camera follows the (predicted/interpolated) target — you, or a spectatee
-    NetPlayer? camP;
-    for (final p in c.players) {
-      if (p.id == camId) camP = p;
-    }
-    final camPos = camP == null ? Offset(c.world / 2, c.world / 2) : _posOf(camP);
+    final camPos = _pos[camId] ?? Offset(c.world / 2, c.world / 2);
     final camX = camPos.dx, camY = camPos.dy;
     final scale = size.height / kViewHeight;
 
@@ -1779,9 +1798,9 @@ class _ArenaPainter extends CustomPainter {
       final weapon = WeaponId.values[p.wi.clamp(0, WeaponId.values.length - 1)];
       final hero = mine ? Profile.instance.hero : p.id % kHeroes.length;
 
-      final pos = _posOf(p);
+      final pos = _pos[p.id] ?? Offset(p.x, p.y);
       if (!onScreen(pos.dx, pos.dy, kPlayerRadius * 2)) continue;
-      final aim = _aimOf(p);
+      final aim = _aims[p.id] ?? p.aim;
 
       if (!p.alive) {
         // faint fallen marker
@@ -1835,7 +1854,7 @@ class _ArenaPainter extends CustomPainter {
     // screen-space overlays: names + hp bars
     for (final p in c.players) {
       if (!p.alive || !p.ready) continue;
-      final wp = _posOf(p);
+      final wp = _pos[p.id] ?? Offset(p.x, p.y);
       if (!onScreen(wp.dx, wp.dy, kPlayerRadius * 2)) continue;
       final sx = (wp.dx - camX) * scale + size.width / 2;
       final sy = (wp.dy - camY) * scale + size.height / 2;
