@@ -134,15 +134,24 @@ class NetClient {
   Map<String, dynamic>? _joinConfig;
   int _hero = 0;
   int _startWi = 5;
+  bool _quick = false;
+
+  /// The room the server actually placed us in (quick match may overflow into
+  /// PUBLIC1, PUBLIC2, …). Empty until the first `roomcfg` arrives.
+  String roomCode = '';
 
   final ValueNotifier<int> rev = ValueNotifier(0);
 
   Future<void> connect(String url, String name, String room,
-      {Map<String, dynamic>? config, int hero = 0, int startWi = 5}) async {
+      {Map<String, dynamic>? config,
+      int hero = 0,
+      int startWi = 5,
+      bool quick = false}) async {
     error = null;
     _joinConfig = config;
     _hero = hero;
     _startWi = startWi;
+    _quick = quick;
     // Free hosts (Render free tier) spin the server down when idle. The first
     // request wakes it but can take ~30-60s — far longer than a WebSocket
     // handshake will wait. So we first send a plain HTTP GET to wake it (which
@@ -165,6 +174,7 @@ class NetClient {
           'room': room,
           'hero': _hero,
           'startWi': _startWi,
+          if (_quick) 'quick': true,
           if (_joinConfig != null) 'config': _joinConfig,
         }));
         ws.listen(
@@ -222,6 +232,7 @@ class NetClient {
           _bump();
           break;
         case 'roomcfg':
+          roomCode = (m['code'] as String?) ?? roomCode;
           map = (m['map'] as String?) ?? map;
           weapon = (m['weapon'] as String?) ?? weapon;
           rounds = (m['rounds'] as num?)?.toInt() ?? rounds;

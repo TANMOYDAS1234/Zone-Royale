@@ -41,6 +41,21 @@ Room roomFor(String code) {
   return rooms.putIfAbsent(key, () => Room(key));
 }
 
+/// Matchmaking for QUICK MATCH: reuse the first public room with a free slot,
+/// otherwise open a fresh one. Nobody "hosts" — quick rooms run the standard
+/// ruleset the client sends, which is identical for every player.
+Room pickPublicRoom() {
+  for (final r in rooms.values) {
+    if (!r.code.startsWith('PUBLIC')) continue;
+    if (r.players.length < r.maxPlayers) return r;
+  }
+  var i = 1;
+  while (rooms.containsKey('PUBLIC$i')) {
+    i++;
+  }
+  return roomFor('PUBLIC$i');
+}
+
 void _leave(Player p) {
   final room = p.roomRef;
   if (room == null) return;
@@ -648,8 +663,14 @@ Future<void> main() async {
                       : p.name;
                   p.hero = (m['hero'] as num?)?.toInt() ?? 0;
                   p.baseWi = (m['startWi'] as num?)?.toInt() ?? p.baseWi;
-                  final room = roomFor((m['room'] as String?) ?? '');
-                  // The host (first player to create the room) sets the rules.
+                  // QUICK MATCH: server picks a public room with a free slot
+                  // (or opens a new one). Custom rooms: join by shared code.
+                  final room = m['quick'] == true
+                      ? pickPublicRoom()
+                      : roomFor((m['room'] as String?) ?? '');
+                  // The host (first player into the room) sets the rules. For
+                  // quick match every client sends the same standard ruleset,
+                  // so the outcome is identical regardless of who arrives first.
                   final cfg = m['config'];
                   if (cfg is Map) room.configure(cfg);
                   // enforce the host's PLAYER LIMIT

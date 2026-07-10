@@ -77,11 +77,34 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     }
   }
 
-  /// Auto-join the shared PUBLIC room with the current rules.
-  Future<void> _quickMatch() async {
-    _room.text = 'PUBLIC';
-    await _connect();
+  /// QUICK MATCH: the server places you in a public room with a free slot.
+  /// Nobody hosts — every client sends this identical standard ruleset, so the
+  /// match plays the same no matter who arrives first.
+  Map<String, dynamic> _standardConfig() {
+    final mode = kMatchModes[1]; // Clash · 25 players
+    return {
+      'world': mode.world,
+      'maxPlayers': mode.players,
+      'map': 'RANDOM',
+      'weapon': 'ALL_ARMS', // everyone brings their own loadout gun
+      'rounds': 1, // single decisive round
+      'startWi': WeaponId.smg.index,
+      'weapons': [
+        for (final id in kWeaponOrder)
+          {
+            'i': id.index,
+            'dmg': kWeapons[id]!.damage,
+            'speed': kWeapons[id]!.bulletSpeed,
+            'range': kWeapons[id]!.range,
+          }
+      ],
+      'medkit': true,
+      'grenades': true,
+      'skills': true,
+    };
   }
+
+  Future<void> _quickMatch() async => _connect(quick: true);
 
   String get _mapName =>
       _mapSel == 0 ? 'RANDOM' : kMapThemes[_mapSel - 1].name.toUpperCase();
@@ -127,9 +150,12 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     return s;
   }
 
-  Future<void> _connect({bool keepDeployed = false}) async {
+  bool _wasQuick = false;
+
+  Future<void> _connect({bool keepDeployed = false, bool quick = false}) async {
     final url = _normalizeUrl(_server.text);
     if (url.isEmpty) return;
+    _wasQuick = quick || (keepDeployed && _wasQuick); // survive auto-reconnect
     final name = Profile.instance.name.trim().isEmpty
         ? 'Player'
         : Profile.instance.name.trim();
@@ -143,9 +169,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       if (!keepDeployed) _deployed = false;
     });
     await c.connect(url, name, room,
-        config: _buildConfig(),
+        config: _wasQuick ? _standardConfig() : _buildConfig(),
         hero: Profile.instance.hero,
-        startWi: Profile.instance.startWeapon.index);
+        startWi: Profile.instance.startWeapon.index,
+        quick: _wasQuick);
   }
 
   void _startMission() => setState(() => _deployed = true);
@@ -275,15 +302,18 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       );
 
   Widget _titles(String sub, String main) => Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(sub,
+              textAlign: TextAlign.center,
               style: TextStyle(
                   fontFamily: _mono,
                   color: kAccent,
                   fontSize: 13,
-                  letterSpacing: 3)),
+                  letterSpacing: 2)),
           const SizedBox(height: 6),
           Text(main,
+              textAlign: TextAlign.center,
               style: const TextStyle(
                   color: Colors.white,
                   fontSize: 26,
@@ -309,7 +339,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                   children: [
                     Center(
                         child: _titles(
-                            'ACTIVE_SESSION_CONFIG', 'CUSTOM_ROOM_COMMAND')),
+                            'Active Session Config', 'Custom Room Command')),
                     const SizedBox(height: 22),
                     _configCard(),
                     const SizedBox(height: 16),
@@ -417,7 +447,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Center(child: _titles('ROOM_${_room.text}', 'BRIEFING_ROOM')),
+                    Center(
+                        child: _titles(
+                            'Room ${c.roomCode.isEmpty ? _room.text : c.roomCode}',
+                            _wasQuick ? 'Quick Match' : 'Briefing Room')),
                     const SizedBox(height: 18),
                     _summaryCard(c),
                     const SizedBox(height: 18),
@@ -445,7 +478,9 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                            'Share room code “${_room.text}” so friends can join.',
+                            _wasQuick
+                                ? 'Waiting for other players to drop in…'
+                                : 'Share room code “${c.roomCode.isEmpty ? _room.text : c.roomCode}” so friends can join.',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.35),
