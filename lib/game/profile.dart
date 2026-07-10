@@ -38,6 +38,7 @@ class Profile {
     'nade': [0.74, 0.68],
     'reload': [0.58, 0.87],
     'fire': [0.44, 0.87],
+    'hp': [0.30, 0.62],
   };
   List<double> hudPosOf(String k) =>
       hudPos[k] ?? kDefaultHud[k] ?? const [0.5, 0.5];

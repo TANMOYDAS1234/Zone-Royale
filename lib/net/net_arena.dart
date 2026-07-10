@@ -60,6 +60,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
   Map<String, dynamic> _buildConfig() {
     final mode = kMatchModes[_sizeSel];
     final w = _weaponSel < 0 ? null : kWeapons[kWeaponOrder[_weaponSel]];
+    final startId = _weaponSel < 0 ? WeaponId.smg : kWeaponOrder[_weaponSel];
     return {
       'world': mode.world,
       'maxPlayers': mode.players,
@@ -69,6 +70,17 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
       if (w != null) 'bulletSpeed': w.bulletSpeed,
       if (w != null) 'bulletRange': w.range,
       'rounds': (_bo / 2).ceil(), // wins needed: BO1=1, BO3=2, BO5=3
+      'startWi': startId.index,
+      // full gun table so the server can drop real weapon loot
+      'weapons': [
+        for (final id in kWeaponOrder)
+          {
+            'i': id.index,
+            'dmg': kWeapons[id]!.damage,
+            'speed': kWeapons[id]!.bulletSpeed,
+            'range': kWeapons[id]!.range,
+          }
+      ],
       'medkit': _medkit,
       'grenades': _grenades,
       'drone': _drone,
@@ -95,7 +107,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen> {
       _client = c;
       _deployed = false;
     });
-    await c.connect(url, name, room, config: _buildConfig());
+    await c.connect(url, name, room,
+        config: _buildConfig(),
+        hero: Profile.instance.hero,
+        startWi: Profile.instance.startWeapon.index);
   }
 
   void _startMission() => setState(() => _deployed = true);
@@ -916,6 +931,8 @@ class _ArenaViewState extends State<_ArenaView> {
   Offset _move = Offset.zero; // left stick (-1..1)
   double _aim = 0; // last aim angle
   bool _fire = false;
+  bool _nadeQ = false; // one-shot: throw a grenade next input
+  bool _skillQ = false; // one-shot: activate the hero skill next input
   Timer? _pump;
 
   @override
@@ -923,7 +940,10 @@ class _ArenaViewState extends State<_ArenaView> {
     super.initState();
     // stream input to the server at a steady rate, independent of frame timing
     _pump = Timer.periodic(const Duration(milliseconds: 33), (_) {
-      widget.client.sendInput(_move.dx, _move.dy, _aim, _fire);
+      widget.client
+          .sendInput(_move.dx, _move.dy, _aim, _fire, nade: _nadeQ, skill: _skillQ);
+      _nadeQ = false;
+      _skillQ = false;
     });
   }
 
@@ -942,18 +962,52 @@ class _ArenaViewState extends State<_ArenaView> {
     }
   }
 
+  Widget _actionButton(
+      String icon, String label, Color color, bool ready, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: ready ? onTap : null,
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withValues(alpha: 0.45),
+          border: Border.all(color: ready ? color : Colors.white24, width: 3),
+          boxShadow: ready
+              ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 12)]
+              : null,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Opacity(
+                opacity: ready ? 1 : 0.4,
+                child: Text(icon, style: const TextStyle(fontSize: 20))),
+            Text(label,
+                style: TextStyle(
+                    color: ready ? color : Colors.white38,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
+    return AnimatedBuilder(
+      animation: c.rev,
+      builder: (context, _) => _stack(c),
+    );
+  }
+
+  Widget _stack(NetClient c) {
     final me = c.me;
     return Stack(
       children: [
-        Positioned.fill(
-          child: AnimatedBuilder(
-            animation: c.rev,
-            builder: (_, _) => CustomPaint(painter: _ArenaPainter(c)),
-          ),
-        ),
+        Positioned.fill(child: CustomPaint(painter: _ArenaPainter(c))),
         // top HUD
         Positioned(
           top: 10,
@@ -1045,6 +1099,26 @@ class _ArenaViewState extends State<_ArenaView> {
             onRelease: () => _fire = false,
             accent: kAccent2,
           ),
+        ),
+        // grenade + skill action buttons (above the aim stick)
+        Positioned(
+          right: 30,
+          bottom: 200,
+          child: _actionButton('💣', '${me?.nades ?? 0}',
+              const Color(0xFF6ABF5A), (me?.nades ?? 0) > 0, () {
+            _nadeQ = true;
+          }),
+        ),
+        Positioned(
+          right: 108,
+          bottom: 200,
+          child: _actionButton(
+              '⚡',
+              (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
+              const Color(0xFFB06BFF),
+              (me?.cd ?? 0) <= 0, () {
+            _skillQ = true;
+          }),
         ),
       ],
     );
@@ -1143,12 +1217,65 @@ class _ArenaPainter extends CustomPainter {
       canvas.drawRRect(rr, obEdge);
     }
 
+    // loot pickups: weapon crates (gun-coloured box + icon) and medkits (green +)
+    for (final l in c.loot) {
+      final o = Offset(l.x, l.y);
+      // soft glow so pickups are easy to spot
+      canvas.drawCircle(o, 22,
+          Paint()..color = (l.kind == 'm' ? const Color(0xFF57E389) : kAccent)
+              .withValues(alpha: 0.16));
+      if (l.kind == 'm') {
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: o, width: 26, height: 26),
+                const Radius.circular(5)),
+            Paint()..color = Colors.white);
+        final cross = Paint()..color = const Color(0xFFE23B3B);
+        canvas.drawRect(
+            Rect.fromCenter(center: o, width: 16, height: 5), cross);
+        canvas.drawRect(
+            Rect.fromCenter(center: o, width: 5, height: 16), cross);
+      } else {
+        final wid = l.wi.clamp(0, WeaponId.values.length - 1);
+        final col = kWeapons[WeaponId.values[wid]]?.color ?? kAccent;
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: o, width: 30, height: 24),
+                const Radius.circular(5)),
+            Paint()..color = const Color(0xFF20242D));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: o, width: 30, height: 24),
+                const Radius.circular(5)),
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 2
+              ..color = col);
+        canvas.drawRect(Rect.fromCenter(center: o, width: 16, height: 4),
+            Paint()..color = col);
+      }
+    }
+
     // bullets
     final bp = Paint()..color = kAccent;
     final bg = Paint()..color = kAccent.withValues(alpha: 0.35);
     for (final b in c.bullets) {
       canvas.drawCircle(Offset(b.x, b.y), 10, bg);
       canvas.drawCircle(Offset(b.x, b.y), 4.5, bp);
+    }
+
+    // flying grenades
+    for (final g in c.nades) {
+      canvas.drawCircle(Offset(g.x, g.y), 14,
+          Paint()..color = const Color(0xFF6ABF5A).withValues(alpha: 0.25));
+      canvas.drawCircle(Offset(g.x, g.y), 7, Paint()..color = const Color(0xFF2E7D32));
+      canvas.drawCircle(
+          Offset(g.x, g.y),
+          7,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2
+            ..color = const Color(0xFF8FE07A));
     }
 
     // players
@@ -1162,8 +1289,8 @@ class _ArenaPainter extends CustomPainter {
           : Color(kSkinTones[p.id % kSkinTones.length]);
       final accessory =
           mine ? Profile.instance.accessory : p.id % kAccessoryNames.length;
-      final weapon =
-          mine ? Profile.instance.startWeapon : WeaponId.values[p.id % 5 + 1];
+      // weapon reflects what the player currently holds (loot can swap it)
+      final weapon = WeaponId.values[p.wi.clamp(0, WeaponId.values.length - 1)];
       final hero = mine ? Profile.instance.hero : p.id % kHeroes.length;
 
       if (!p.alive) {
@@ -1176,6 +1303,19 @@ class _ArenaPainter extends CustomPainter {
           outfit, skin, accessory, weapon,
           fill: fill, stroke: stroke, walk: 0, hero: hero);
 
+      if (p.shield) {
+        canvas.drawCircle(
+            Offset(p.x, p.y),
+            kPlayerRadius * 1.5,
+            Paint()..color = kSafeEdge.withValues(alpha: 0.18));
+        canvas.drawCircle(
+            Offset(p.x, p.y),
+            kPlayerRadius * 1.5,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 3
+              ..color = kSafeEdge);
+      }
       if (mine) {
         canvas.drawCircle(
             Offset(p.x, p.y),

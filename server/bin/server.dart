@@ -24,6 +24,11 @@ const double bulletSpeed = 900;
 const double bulletRange = 620;
 const double hitRadius = 24;
 const double bulletDamage = 18;
+const double nadeSpeed = 560;
+const double nadeFuse = 1.1; // seconds of flight before it detonates
+const double nadeRadius = 150; // blast radius
+const double nadeDamage = 65; // damage at the centre (falls off with distance)
+const double skillCooldown = 12;
 
 int _nextId = 1;
 final Random _rng = Random();
@@ -56,6 +61,19 @@ class Player {
   bool fire = false, alive = true;
   int kills = 0;
   int roundWins = 0;
+  // current weapon (loot can swap it)
+  int wi = 5;
+  double dmg = bulletDamage;
+  double bSpeed = bulletSpeed;
+  double bRange = bulletRange;
+  // grenades + hero skill
+  int grenades = 2;
+  int hero = 0; // index into the client's hero list
+  int baseWi = 5; // the player's own loadout weapon (used in ALL_ARMS rooms)
+  double skillCd = 0; // seconds until the skill is ready again
+  double dashT = 0; // speed-burst timer
+  double shieldT = 0; // damage-immunity timer
+  double boostT = 0; // damage-boost timer
   String name;
   Room? roomRef;
   Player(this.id, this.socket, this.x, this.y, this.name);
@@ -64,7 +82,29 @@ class Player {
 class Bullet {
   double x, y, vx, vy, dist = 0;
   final int owner;
-  Bullet(this.x, this.y, this.vx, this.vy, this.owner);
+  final double dmg, range;
+  Bullet(this.x, this.y, this.vx, this.vy, this.owner, this.dmg, this.range);
+}
+
+class Grenade {
+  double x, y, vx, vy, fuse;
+  final int owner;
+  Grenade(this.x, this.y, this.vx, this.vy, this.fuse, this.owner);
+}
+
+// A ground pickup: weapon crate ('w') or medkit ('m').
+int _lootId = 1;
+
+class Loot {
+  final int id;
+  final double x, y;
+  final String kind; // 'w' | 'm'
+  final int wi; // weapon index (weapon crates)
+  final double dmg, speed, range;
+  Loot(this.id, this.x, this.y, this.kind, this.wi, this.dmg, this.speed,
+      this.range);
+  Map<String, dynamic> get json =>
+      {'x': x.round(), 'y': y.round(), 'k': kind, 'wi': wi};
 }
 
 // A rectangular obstacle (building/cover). x,y is the centre.
@@ -96,6 +136,13 @@ class Room {
   bool _roundEnding = false;
   bool matchOver = false;
 
+  // ---- weapons + loot + grenades ----
+  List<Map<String, dynamic>> weaponTable = []; // host sends the full gun table
+  int startWi = 5;
+  bool allArms = true; // when true each player keeps their own loadout weapon
+  final List<Loot> loot = [];
+  final List<Grenade> grenades = [];
+
   // ---- map cover + shrinking gas zone (parity with a normal match) ----
   final List<Obs> obstacles = [];
   double zx = worldSize / 2, zy = worldSize / 2;
@@ -120,6 +167,7 @@ class Room {
       obstacles.add(Obs(x, y, hw, hh));
     }
     _resetZone();
+    _spawnLoot();
   }
 
   void _resetZone() {
@@ -127,6 +175,26 @@ class Room {
     zy = world / 2;
     zr = world * 0.72;
     _elapsed = 0;
+  }
+
+  void _spawnLoot() {
+    loot.clear();
+    final k = (obstacles.length * 0.7).round().clamp(6, 24);
+    for (var i = 0; i < k; i++) {
+      double x = 0, y = 0;
+      for (var t = 0; t < 20; t++) {
+        x = 60 + _rng.nextDouble() * (world - 120);
+        y = 60 + _rng.nextDouble() * (world - 120);
+        if (!_blocksPlayer(x, y)) break;
+      }
+      if (weaponTable.isEmpty || _rng.nextDouble() < 0.35) {
+        loot.add(Loot(_lootId++, x, y, 'm', -1, 0, 0, 0)); // medkit
+      } else {
+        final w = weaponTable[_rng.nextInt(weaponTable.length)];
+        loot.add(Loot(_lootId++, x, y, 'w', w['i'] as int, w['dmg'] as double,
+            w['speed'] as double, w['range'] as double));
+      }
+    }
   }
 
   bool _blocksPlayer(double x, double y) {
@@ -152,8 +220,22 @@ class Room {
     bRange = (cfg['bulletRange'] as num?)?.toDouble() ?? bRange;
     map = (cfg['map'] as String?) ?? map;
     weapon = (cfg['weapon'] as String?) ?? weapon;
+    allArms = weapon.toUpperCase() == 'ALL_ARMS';
     maxPlayers = (cfg['maxPlayers'] as num?)?.toInt() ?? maxPlayers;
     rounds = ((cfg['rounds'] as num?)?.toInt() ?? rounds).clamp(1, 9);
+    startWi = (cfg['startWi'] as num?)?.toInt() ?? startWi;
+    final wl = cfg['weapons'];
+    if (wl is List) {
+      weaponTable = [
+        for (final w in wl)
+          {
+            'i': (w['i'] as num).toInt(),
+            'dmg': (w['dmg'] as num).toDouble(),
+            'speed': (w['speed'] as num).toDouble(),
+            'range': (w['range'] as num).toDouble(),
+          }
+      ];
+    }
     configured = true;
   }
 
@@ -206,12 +288,54 @@ class Room {
       bullets.add(Bullet(
         p.x + cos(p.aim) * hitRadius,
         p.y + sin(p.aim) * hitRadius,
-        cos(p.aim) * bSpeed,
-        sin(p.aim) * bSpeed,
+        cos(p.aim) * p.bSpeed,
+        sin(p.aim) * p.bSpeed,
         p.id,
+        p.dmg * (p.boostT > 0 ? 1.6 : 1.0), // frenzy damage boost
+        p.bRange,
       ));
     }
     p.fire = f;
+
+    // throw a grenade
+    if (m['nade'] == true && p.alive && !matchOver && p.grenades > 0) {
+      p.grenades--;
+      grenades.add(Grenade(
+        p.x + cos(p.aim) * hitRadius,
+        p.y + sin(p.aim) * hitRadius,
+        cos(p.aim) * nadeSpeed,
+        sin(p.aim) * nadeSpeed,
+        nadeFuse,
+        p.id,
+      ));
+    }
+    // activate the hero skill
+    if (m['skill'] == true && p.alive && !matchOver && p.skillCd <= 0) {
+      _activateSkill(p);
+    }
+  }
+
+  // Hero skill by index: 0 dash, 1 shield, 2 frenzy(dmg boost), 3 medic, 4 grenadier.
+  void _activateSkill(Player p) {
+    p.skillCd = skillCooldown;
+    switch (p.hero % 5) {
+      case 0:
+        p.dashT = 2.2;
+        break;
+      case 1:
+        p.shieldT = 3.5;
+        break;
+      case 2:
+        p.boostT = 5;
+        break;
+      case 3:
+        p.hp = (p.hp + 55).clamp(0.0, 100.0);
+        break;
+      case 4:
+        p.grenades += 2;
+        break;
+    }
+    broadcast({'type': 'skill', 'id': p.id, 'hero': p.hero % 5});
   }
 
   void _spawn(Player p) {
@@ -223,14 +347,45 @@ class Room {
     }
     p.hp = 100;
     p.alive = true;
+    // ALL_ARMS: each player keeps their own loadout gun (defaults to SMG);
+    // otherwise everyone uses the host's forced weapon. Loot can swap it.
+    if (allArms) {
+      p.wi = p.baseWi;
+      final s = _statsFor(p.baseWi);
+      p.dmg = s[0];
+      p.bSpeed = s[1];
+      p.bRange = s[2];
+    } else {
+      p.wi = startWi;
+      p.dmg = dmg;
+      p.bSpeed = bSpeed;
+      p.bRange = bRange;
+    }
+    p.grenades = 2;
+    p.skillCd = 0;
+    p.dashT = 0;
+    p.shieldT = 0;
+    p.boostT = 0;
   }
 
   void _respawnAll() {
     _resetZone();
+    _spawnLoot();
     for (final p in players) {
       _spawn(p);
     }
     bullets.clear();
+    grenades.clear();
+  }
+
+  // weapon stats for an index from the host's table (fallback = room default)
+  List<double> _statsFor(int wi) {
+    for (final w in weaponTable) {
+      if (w['i'] == wi) {
+        return [w['dmg'] as double, w['speed'] as double, w['range'] as double];
+      }
+    }
+    return [dmg, bSpeed, bRange];
   }
 
   void _tick() {
@@ -239,7 +394,14 @@ class Room {
       broadcast(_snapshot());
       return;
     }
-    // movement (with obstacle sliding collision)
+    // tick down skill timers
+    for (final p in players) {
+      if (p.skillCd > 0) p.skillCd -= dt;
+      if (p.dashT > 0) p.dashT -= dt;
+      if (p.shieldT > 0) p.shieldT -= dt;
+      if (p.boostT > 0) p.boostT -= dt;
+    }
+    // movement (with obstacle sliding collision; dash gives a speed burst)
     for (final p in players) {
       if (!p.alive) continue;
       var mx = p.mx, my = p.my;
@@ -248,8 +410,9 @@ class Room {
         mx /= len;
         my /= len;
       }
-      final nx = (p.x + mx * playerSpeed * dt).clamp(20.0, world - 20);
-      final ny = (p.y + my * playerSpeed * dt).clamp(20.0, world - 20);
+      final spd = playerSpeed * (p.dashT > 0 ? 1.8 : 1.0);
+      final nx = (p.x + mx * spd * dt).clamp(20.0, world - 20);
+      final ny = (p.y + my * spd * dt).clamp(20.0, world - 20);
       if (!_blocksPlayer(nx, ny)) {
         p.x = nx;
         p.y = ny;
@@ -263,17 +426,18 @@ class Room {
     for (final b in bullets) {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      b.dist += bSpeed * dt;
+      b.dist += sqrt(b.vx * b.vx + b.vy * b.vy) * dt;
       if (_blocksBullet(b.x, b.y)) {
-        b.dist = bRange + 1;
+        b.dist = b.range + 1;
         continue;
       }
       for (final p in players) {
         if (!p.alive || p.id == b.owner) continue;
         final dx = p.x - b.x, dy = p.y - b.y;
         if (dx * dx + dy * dy < hitRadius * hitRadius) {
-          p.hp -= dmg;
-          b.dist = bRange + 1; // consume the bullet
+          b.dist = b.range + 1; // consume the bullet
+          if (p.shieldT > 0) break; // shield absorbs the hit
+          p.hp -= b.dmg;
           if (p.hp <= 0) {
             p.alive = false;
             final killer =
@@ -285,7 +449,55 @@ class Room {
       }
     }
     bullets.removeWhere((b) =>
-        b.dist > bRange || b.x < 0 || b.x > world || b.y < 0 || b.y > world);
+        b.dist > b.range || b.x < 0 || b.x > world || b.y < 0 || b.y > world);
+
+    // loot pickups: walk over a crate to swap weapon, or a medkit to heal
+    loot.removeWhere((l) {
+      for (final p in players) {
+        if (!p.alive) continue;
+        final dx = p.x - l.x, dy = p.y - l.y;
+        if (dx * dx + dy * dy < 34 * 34) {
+          if (l.kind == 'm') {
+            p.hp = (p.hp + 40).clamp(0.0, 100.0);
+          } else {
+            p.wi = l.wi;
+            p.dmg = l.dmg;
+            p.bSpeed = l.speed;
+            p.bRange = l.range;
+          }
+          return true;
+        }
+      }
+      return false;
+    });
+
+    // grenades: fly, then detonate with radial (falloff) damage
+    for (final g in grenades) {
+      g.x += g.vx * dt;
+      g.y += g.vy * dt;
+      g.vx *= 0.965; // drag so it lands
+      g.vy *= 0.965;
+      g.fuse -= dt;
+      if (_blocksBullet(g.x, g.y)) g.fuse = min(g.fuse, 0.02); // bump = detonate
+      if (g.fuse <= 0) {
+        for (final p in players) {
+          if (!p.alive || p.shieldT > 0) continue;
+          final dx = p.x - g.x, dy = p.y - g.y;
+          final d = sqrt(dx * dx + dy * dy);
+          if (d < nadeRadius) {
+            p.hp -= nadeDamage * (1 - d / nadeRadius);
+            if (p.hp <= 0) {
+              p.alive = false;
+              final killer =
+                  players.firstWhere((k) => k.id == g.owner, orElse: () => p);
+              if (killer.id != p.id) killer.kills++;
+            }
+          }
+        }
+        broadcast({'type': 'boom', 'x': g.x.round(), 'y': g.y.round()});
+      }
+    }
+    grenades.removeWhere((g) => g.fuse <= 0);
 
     // shrinking gas zone: after a grace period the safe circle closes; anyone
     // caught outside it takes damage until they get back in.
@@ -356,12 +568,20 @@ class Room {
               'alive': p.alive,
               'kills': p.kills,
               'wins': p.roundWins,
+              'wi': p.wi,
+              'nades': p.grenades,
+              'sh': p.shieldT > 0,
+              'cd': p.skillCd.clamp(0, 99).round(),
               'name': p.name,
             }
         ],
         'bullets': [
           for (final b in bullets) {'x': b.x.round(), 'y': b.y.round()}
         ],
+        'nades': [
+          for (final g in grenades) {'x': g.x.round(), 'y': g.y.round()}
+        ],
+        'loot': [for (final l in loot) l.json],
         'zone': {'x': zx.round(), 'y': zy.round(), 'r': zr.round()},
       });
 
@@ -410,6 +630,8 @@ Future<void> main() async {
                   p.name = (m['name'] as String?)?.trim().isNotEmpty == true
                       ? (m['name'] as String).trim()
                       : p.name;
+                  p.hero = (m['hero'] as num?)?.toInt() ?? 0;
+                  p.baseWi = (m['startWi'] as num?)?.toInt() ?? p.baseWi;
                   final room = roomFor((m['room'] as String?) ?? '');
                   // The host (first player to create the room) sets the rules.
                   final cfg = m['config'];

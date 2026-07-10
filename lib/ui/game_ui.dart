@@ -114,6 +114,8 @@ class HudLayer extends StatelessWidget {
           _place(s, 'nade', _ticked(_grenadeButton), 60, 60),
           _place(s, 'reload', _ticked(_reloadButton), 120, 70),
           _place(s, 'fire', _ticked(_fireModeButton), 64, 64),
+          _place(s, 'hp',
+              _ticked(() => SizedBox(width: 150, child: _hpBar())), 150, 44),
         ] else
           Positioned(
             right: 28,
@@ -182,9 +184,37 @@ class HudLayer extends StatelessWidget {
     }
   }
 
-  Widget _info(BuildContext context) {
+  Widget _hpBar() {
     final p = game.player;
     final hpFrac = (p.hp / kMaxHp).clamp(0.0, 1.0);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('${p.hp.ceil().clamp(0, 100)} HP',
+            style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+                shadows: [Shadow(color: Colors.black, blurRadius: 3)])),
+        const SizedBox(height: 3),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: hpFrac,
+            minHeight: 12,
+            backgroundColor: Colors.black45,
+            valueColor: AlwaysStoppedAnimation(
+              Color.lerp(
+                  const Color(0xFFFF4D4D), const Color(0xFF52E06A), hpFrac)!,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _info(BuildContext context) {
+    final p = game.player;
     final floating = game.isMobile || game.touchMode;
     return SafeArea(
       child: Padding(
@@ -234,36 +264,13 @@ class HudLayer extends StatelessWidget {
                           fontWeight: FontWeight.w600, fontSize: 13)),
                 ),
               ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                // health
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${p.hp.ceil().clamp(0, 100)} HP',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 13)),
-                      const SizedBox(height: 3),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: hpFrac,
-                          minHeight: 12,
-                          backgroundColor: Colors.black45,
-                          valueColor: AlwaysStoppedAnimation(
-                            Color.lerp(const Color(0xFFFF4D4D),
-                                const Color(0xFF52E06A), hpFrac)!,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // On touch, fire-mode + grenade + reload float freely
-                // (customisable); on desktop they stay here in the info row.
-                if (!floating) ...[
+            // On touch, HP + fire-mode + grenade + reload float freely
+            // (customisable); on desktop they stay here in the info row.
+            if (!floating)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(child: _hpBar()),
                   const SizedBox(width: 10),
                   _fireModeButton(),
                   const SizedBox(width: 8),
@@ -271,8 +278,7 @@ class HudLayer extends StatelessWidget {
                   const SizedBox(width: 10),
                   _reloadButton(),
                 ],
-              ],
-            ),
+              ),
             // leave room for the sticks on touch
             SizedBox(height: game.touchMode ? 150 : 4),
           ],
@@ -538,6 +544,7 @@ class _ControlsEditorState extends State<ControlsEditor> {
     'nade': 'GRENADE',
     'reload': 'RELOAD',
     'fire': 'FIRE MODE',
+    'hp': 'HP BAR',
   };
 
   @override
@@ -589,6 +596,7 @@ class _ControlsEditorState extends State<ControlsEditor> {
                   accent: const Color(0xFF6ABF5A), emoji: '💣'),
               _token(s, 'reload', 120, 66, accent: kAccent, box: true),
               _token(s, 'fire', 64, 64, accent: kAccent, box: true),
+              _token(s, 'hp', 150, 46, accent: const Color(0xFF52E06A), box: true),
               // header
               Positioned(
                 top: 0,

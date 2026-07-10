@@ -7,11 +7,12 @@ import 'package:flutter/foundation.dart';
 class NetPlayer {
   final int id;
   final double x, y, aim;
-  final int hp, kills, wins;
-  final bool alive;
+  final int hp, kills, wins, wi, nades, cd;
+  final bool alive, shield;
   final String name;
   const NetPlayer(this.id, this.x, this.y, this.aim, this.hp, this.kills,
-      this.wins, this.alive, this.name);
+      this.wins, this.wi, this.nades, this.cd, this.alive, this.shield,
+      this.name);
 
   factory NetPlayer.from(Map m) => NetPlayer(
         (m['id'] as num).toInt(),
@@ -21,7 +22,11 @@ class NetPlayer {
         (m['hp'] as num).toInt(),
         (m['kills'] as num?)?.toInt() ?? 0,
         (m['wins'] as num?)?.toInt() ?? 0,
+        (m['wi'] as num?)?.toInt() ?? 5,
+        (m['nades'] as num?)?.toInt() ?? 0,
+        (m['cd'] as num?)?.toInt() ?? 0,
         m['alive'] == true,
+        m['sh'] == true,
         (m['name'] as String?) ?? '',
       );
 }
@@ -35,6 +40,14 @@ class NetBullet {
 class NetObs {
   final double x, y, w, h;
   const NetObs(this.x, this.y, this.w, this.h);
+}
+
+/// A ground pickup: weapon crate ('w', with weapon index wi) or medkit ('m').
+class NetLoot {
+  final double x, y;
+  final String kind;
+  final int wi;
+  const NetLoot(this.x, this.y, this.kind, this.wi);
 }
 
 /// Thin client for the Zone Royale authoritative server. Connects over a plain
@@ -54,6 +67,8 @@ class NetClient {
   List<NetPlayer> players = const [];
   List<NetBullet> bullets = const [];
   List<NetObs> obstacles = const [];
+  List<NetLoot> loot = const [];
+  List<NetBullet> nades = const []; // flying grenade positions
 
   // shrinking gas zone
   double zoneX = 1600, zoneY = 1600, zoneR = 3000;
@@ -69,13 +84,17 @@ class NetClient {
   String? matchWinner; // set when the match is decided
 
   Map<String, dynamic>? _joinConfig;
+  int _hero = 0;
+  int _startWi = 5;
 
   final ValueNotifier<int> rev = ValueNotifier(0);
 
   Future<void> connect(String url, String name, String room,
-      {Map<String, dynamic>? config}) async {
+      {Map<String, dynamic>? config, int hero = 0, int startWi = 5}) async {
     error = null;
     _joinConfig = config;
+    _hero = hero;
+    _startWi = startWi;
     // Free hosts (Render free tier) spin the server down when idle. The first
     // request wakes it but can take ~30-60s — far longer than a WebSocket
     // handshake will wait. So we first send a plain HTTP GET to wake it (which
@@ -96,6 +115,8 @@ class NetClient {
           'type': 'join',
           'name': name,
           'room': room,
+          'hero': _hero,
+          'startWi': _startWi,
           if (_joinConfig != null) 'config': _joinConfig,
         }));
         ws.listen(
@@ -193,6 +214,25 @@ class NetClient {
             for (final b in (m['bullets'] as List))
               NetBullet((b['x'] as num).toDouble(), (b['y'] as num).toDouble())
           ];
+          final nd = m['nades'];
+          if (nd is List) {
+            nades = [
+              for (final g in nd)
+                NetBullet((g['x'] as num).toDouble(), (g['y'] as num).toDouble())
+            ];
+          }
+          final lt = m['loot'];
+          if (lt is List) {
+            loot = [
+              for (final l in lt)
+                NetLoot(
+                  (l['x'] as num).toDouble(),
+                  (l['y'] as num).toDouble(),
+                  (l['k'] as String?) ?? 'm',
+                  (l['wi'] as num?)?.toInt() ?? -1,
+                )
+            ];
+          }
           final z = m['zone'];
           if (z is Map) {
             zoneX = (z['x'] as num).toDouble();
@@ -225,7 +265,8 @@ class NetClient {
     return n;
   }
 
-  void sendInput(double mx, double my, double aim, bool fire) {
+  void sendInput(double mx, double my, double aim, bool fire,
+      {bool nade = false, bool skill = false}) {
     final ws = _ws;
     if (ws == null) return;
     try {
@@ -235,6 +276,8 @@ class NetClient {
         'my': double.parse(my.toStringAsFixed(3)),
         'aim': double.parse(aim.toStringAsFixed(3)),
         'fire': fire,
+        if (nade) 'nade': true,
+        if (skill) 'skill': true,
       }));
     } catch (_) {}
   }
