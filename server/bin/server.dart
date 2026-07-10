@@ -47,7 +47,7 @@ Room roomFor(String code) {
 Room pickPublicRoom() {
   for (final r in rooms.values) {
     if (!r.code.startsWith('PUBLIC')) continue;
-    if (r.players.length < r.maxPlayers) return r;
+    if (r.humans < r.maxPlayers) return r;
   }
   var i = 1;
   while (rooms.containsKey('PUBLIC$i')) {
@@ -58,24 +58,29 @@ Room pickPublicRoom() {
 
 void _leave(Player p) {
   final room = p.roomRef;
-  if (room == null) return;
+  if (room == null || p.isBot) return;
   room.remove(p);
-  if (room.players.isEmpty) {
+  if (room.humans == 0) {
     room.dispose();
     rooms.remove(room.code);
-    print('- room "${room.code}" closed (empty)');
+    print('- room "${room.code}" closed (no humans)');
   }
 }
 
 class Player {
   final int id;
-  final WebSocket socket;
+  final WebSocket? socket; // null for bots
+  bool get isBot => socket == null;
   double x, y;
   double aim = 0, hp = 100;
   double mx = 0, my = 0; // movement input (-1..1)
   bool fire = false, alive = true;
   int kills = 0;
   int roundWins = 0;
+  // bot brain
+  double fireCd = 0;
+  double wanderT = 0;
+  double wx = 0, wy = 0;
   // current weapon (loot can swap it)
   int wi = 5;
   double dmg = bulletDamage;
@@ -159,6 +164,25 @@ class Room {
   bool allowMedkits = true;
   bool allowGrenades = true;
   bool allowSkills = true;
+  bool fillBots = true; // top the room up with bots so it's always playable
+  int botTarget = 8; // total bodies (humans + bots) to aim for
+
+  /// Only real players count toward the room's PLAYER LIMIT.
+  int get humans {
+    var n = 0;
+    for (final p in players) {
+      if (!p.isBot) n++;
+    }
+    return n;
+  }
+
+  int get botCount {
+    var n = 0;
+    for (final p in players) {
+      if (p.isBot) n++;
+    }
+    return n;
+  }
   final List<Loot> loot = [];
   final List<Grenade> grenades = [];
 
@@ -194,6 +218,120 @@ class Room {
     zy = world / 2;
     zr = world * 0.72;
     _elapsed = 0;
+  }
+
+  // ---- bots: keep the room populated so a match is always playable ----
+  static const _botNames = [
+    'VIPER', 'GHOST', 'RAVEN', 'HAWK', 'WOLF', 'ONYX', 'ECHO', 'NOVA',
+    'BLAZE', 'FROST', 'DELTA', 'ZERO', 'TITAN', 'ROGUE', 'STORM', 'ATLAS',
+  ];
+
+  void _addBot() {
+    final id = _nextId++;
+    final b = Player(id, null, 0, 0, 'BOT ${_botNames[id % _botNames.length]}');
+    b.hero = _rng.nextInt(5);
+    b.baseWi = weaponTable.isEmpty
+        ? startWi
+        : weaponTable[_rng.nextInt(weaponTable.length)]['i'] as int;
+    b.roomRef = this;
+    players.add(b);
+    _spawn(b);
+  }
+
+  /// Bots fill the gap between the human count and [botTarget]; they step aside
+  /// as real players arrive.
+  void _syncBots() {
+    if (!fillBots) {
+      players.removeWhere((p) => p.isBot);
+      return;
+    }
+    if (humans == 0) {
+      players.removeWhere((p) => p.isBot); // nobody to play against
+      return;
+    }
+    final want = (botTarget - humans).clamp(0, botTarget);
+    var have = botCount;
+    while (have < want) {
+      _addBot();
+      have++;
+    }
+    while (have > want) {
+      final idx = players.indexWhere((p) => p.isBot && !p.alive);
+      players.removeAt(idx >= 0 ? idx : players.indexWhere((p) => p.isBot));
+      have--;
+    }
+  }
+
+  void _botThink(double dt) {
+    for (final b in players) {
+      if (!b.isBot || !b.alive) continue;
+      b.fireCd -= dt;
+
+      // 1) stay inside the safe circle — it always wins over fighting
+      final zdx = zx - b.x, zdy = zy - b.y;
+      final zd = sqrt(zdx * zdx + zdy * zdy);
+      if (zd > zr * 0.82) {
+        b.mx = zdx / (zd == 0 ? 1 : zd);
+        b.my = zdy / (zd == 0 ? 1 : zd);
+        b.aim = atan2(b.my, b.mx);
+        continue;
+      }
+
+      // 2) hunt the nearest living opponent
+      Player? target;
+      var best = 1e9;
+      for (final p in players) {
+        if (p.id == b.id || !p.alive) continue;
+        final dx = p.x - b.x, dy = p.y - b.y;
+        final d = dx * dx + dy * dy;
+        if (d < best) {
+          best = d;
+          target = p;
+        }
+      }
+      final dist = sqrt(best);
+      if (target != null && dist < 720) {
+        final dx = target.x - b.x, dy = target.y - b.y;
+        b.aim = atan2(dy, dx) + (_rng.nextDouble() - 0.5) * 0.12; // slight sway
+        // keep a fighting distance
+        final move = dist > 300 ? 1.0 : (dist < 130 ? -1.0 : 0.0);
+        b.mx = (dx / dist) * move;
+        b.my = (dy / dist) * move;
+        if (dist < b.bRange && b.fireCd <= 0 && !matchOver) {
+          b.fireCd = 0.45 + _rng.nextDouble() * 0.45;
+          bullets.add(Bullet(
+            b.x + cos(b.aim) * hitRadius,
+            b.y + sin(b.aim) * hitRadius,
+            cos(b.aim) * b.bSpeed,
+            sin(b.aim) * b.bSpeed,
+            b.id,
+            b.dmg,
+            b.bRange,
+          ));
+        }
+        continue;
+      }
+
+      // 3) nobody near — wander toward a point inside the zone
+      b.wanderT -= dt;
+      if (b.wanderT <= 0) {
+        b.wanderT = 2 + _rng.nextDouble() * 3;
+        final a = _rng.nextDouble() * 2 * pi;
+        final r = _rng.nextDouble() * zr * 0.7;
+        b.wx = zx + cos(a) * r;
+        b.wy = zy + sin(a) * r;
+      }
+      final wdx = b.wx - b.x, wdy = b.wy - b.y;
+      final wd = sqrt(wdx * wdx + wdy * wdy);
+      if (wd > 12) {
+        b.mx = wdx / wd;
+        b.my = wdy / wd;
+        b.aim = atan2(wdy, wdx);
+      } else {
+        b.mx = 0;
+        b.my = 0;
+      }
+    }
   }
 
   void _spawnLoot() {
@@ -249,6 +387,8 @@ class Room {
     allowMedkits = cfg['medkit'] != false;
     allowGrenades = cfg['grenades'] != false;
     allowSkills = cfg['skills'] != false;
+    fillBots = cfg['bots'] != false;
+    botTarget = ((cfg['botTarget'] as num?)?.toInt() ?? botTarget).clamp(2, 30);
     final wl = cfg['weapons'];
     if (wl is List) {
       weaponTable = [
@@ -277,6 +417,8 @@ class Room {
         'medkit': allowMedkits,
         'grenades': allowGrenades,
         'skills': allowSkills,
+        'bots': fillBots,
+        'botTarget': botTarget,
         'obstacles': [for (final o in obstacles) o.json],
       };
 
@@ -284,20 +426,26 @@ class Room {
     players.add(p);
     if (obstacles.isEmpty) _genMap(); // build the arena once, on first join
     _send(p, {'type': 'welcome', 'id': p.id, 'world': world});
+    _syncBots(); // top up (or free up) bot slots for the new human
     broadcast(cfgMsg); // everyone learns the room rules + map
     _loop ??= Timer.periodic(
         Duration(milliseconds: 1000 ~/ tickHz), (_) => _tick());
     print('+ player ${p.id} -> room "$code" '
-        '(${players.length}/$maxPlayers, map=$map, gun=$weapon, rounds=$rounds)');
+        '($humans human/$botCount bot, map=$map, gun=$weapon, rounds=$rounds)');
   }
 
   void remove(Player p) {
     players.remove(p);
-    print('- player ${p.id} (${players.length} online)');
-    if (players.isEmpty) {
+    print('- player ${p.id} ($humans human online)');
+    if (humans == 0) {
+      // nobody real left — stop the sim and drop the bots
       _loop?.cancel();
       _loop = null;
+      players.removeWhere((q) => q.isBot);
       bullets.clear();
+      grenades.clear();
+    } else {
+      _syncBots();
     }
   }
 
@@ -399,6 +547,7 @@ class Room {
   void _respawnAll() {
     _resetZone();
     _spawnLoot();
+    _syncBots(); // refill any bots that were culled mid-round
     for (final p in players) {
       _spawn(p);
     }
@@ -422,6 +571,8 @@ class Room {
       broadcast(_snapshot());
       return;
     }
+    _botThink(dt); // bots choose their movement/aim, then share the sim below
+
     // tick down skill timers
     for (final p in players) {
       if (p.skillCd > 0) p.skillCd -= dt;
@@ -601,14 +752,29 @@ class Room {
               'sh': p.shieldT > 0,
               'dsh': p.dashT > 0,
               'cd': p.skillCd.clamp(0, 99).round(),
+              'bot': p.isBot,
               'name': p.name,
             }
         ],
+        // velocity travels with projectiles so the client can extrapolate them
+        // smoothly between ticks instead of stepping 30x/second
         'bullets': [
-          for (final b in bullets) {'x': b.x.round(), 'y': b.y.round()}
+          for (final b in bullets)
+            {
+              'x': b.x.round(),
+              'y': b.y.round(),
+              'vx': b.vx.round(),
+              'vy': b.vy.round()
+            }
         ],
         'nades': [
-          for (final g in grenades) {'x': g.x.round(), 'y': g.y.round()}
+          for (final g in grenades)
+            {
+              'x': g.x.round(),
+              'y': g.y.round(),
+              'vx': g.vx.round(),
+              'vy': g.vy.round()
+            }
         ],
         'loot': [for (final l in loot) l.json],
         'zone': {'x': zx.round(), 'y': zy.round(), 'r': zr.round()},
@@ -620,14 +786,14 @@ class Room {
     final s = msg is String ? msg : jsonEncode(msg);
     for (final p in players) {
       try {
-        p.socket.add(s);
+        p.socket?.add(s); // bots have no socket
       } catch (_) {}
     }
   }
 
   void _send(Player p, Map<String, dynamic> m) {
     try {
-      p.socket.add(jsonEncode(m));
+      p.socket?.add(jsonEncode(m));
     } catch (_) {}
   }
 }
@@ -673,13 +839,13 @@ Future<void> main() async {
                   // so the outcome is identical regardless of who arrives first.
                   final cfg = m['config'];
                   if (cfg is Map) room.configure(cfg);
-                  // enforce the host's PLAYER LIMIT
-                  if (room.players.length >= room.maxPlayers) {
+                  // enforce the host's PLAYER LIMIT (bots don't take slots)
+                  if (room.humans >= room.maxPlayers) {
                     try {
                       ws.add(jsonEncode(
                           {'type': 'full', 'max': room.maxPlayers}));
                     } catch (_) {}
-                    if (room.players.isEmpty) rooms.remove(room.code);
+                    if (room.humans == 0) rooms.remove(room.code);
                     ws.close();
                     return;
                   }

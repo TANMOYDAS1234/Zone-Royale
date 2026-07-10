@@ -1357,30 +1357,40 @@ class EndOverlay extends StatelessWidget {
       final dir = await getTemporaryDirectory();
       final file = await File('${dir.path}/zone_royale_result.png')
           .writeAsBytes(data.buffer.asUint8List());
-      final won = game.resultWon;
-      final txt = won
-          ? '🏆 WINNER WINNER! #1 in Zone Royale — ${game.player.kills} kills. Beat that!'
-          : '🔫 Zone Royale — #${game.resultPlacement}, ${game.player.kills} kills. My turn next.';
-      await SharePlus.instance
-          .share(ShareParams(files: [XFile(file.path)], text: txt));
+      await SharePlus.instance.share(
+          ShareParams(files: [XFile(file.path)], text: _resultText()));
     } catch (_) {
-      if (context.mounted) _share(context); // text fallback
+      if (context.mounted) await _share(context); // text-only fallback
     }
   }
 
-  void _share(BuildContext context) {
-    final won = game.resultWon;
-    final place = game.resultPlacement;
-    final kills = game.player.kills;
-    final txt = won
-        ? '🏆 WINNER WINNER! #1 / ${game.chars.length} in Zone Royale — $kills kills. Can you beat me?'
-        : '🔫 Zone Royale — #$place / ${game.chars.length}, $kills kills. My turn to win next.';
-    Clipboard.setData(ClipboardData(text: txt));
+  /// Fallback when the screenshot capture fails: still open the system share
+  /// sheet, just with text. Clipboard is the last resort.
+  Future<void> _share(BuildContext context) async {
+    final txt = _resultText();
+    try {
+      await SharePlus.instance.share(ShareParams(text: txt));
+      return;
+    } catch (_) {
+      // no share target — fall through to the clipboard
+    }
+    await Clipboard.setData(ClipboardData(text: txt));
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
           content: Text('Result copied — paste it anywhere!'),
           duration: Duration(seconds: 2)),
     );
+  }
+
+  /// Dynamic share caption built from the actual match result.
+  String _resultText() {
+    final won = game.resultWon;
+    final kills = game.player.kills;
+    final total = game.chars.length;
+    return won
+        ? '🏆 WINNER WINNER! #1 / $total in Zone Royale — $kills kills. Can you beat me?'
+        : '🔫 Zone Royale — #${game.resultPlacement} / $total, $kills kills. My turn to win next.';
   }
 
   Widget _rewardsCard(RoyaleGame game) {
@@ -2082,14 +2092,28 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
             ),
           ],
         ),
-        _slider('Stick size', p.stickScale, 0.8, 1.35, (v) {
-          setState(() => p.stickScale = v);
-          p.save(); // persist immediately so it applies to the next match
-        }),
-        _slider('Stick opacity', p.stickOpacity, 0.5, 1.4, (v) {
-          setState(() => p.stickOpacity = v);
-          p.save();
-        }),
+        _slider('Stick size', p.stickScale, 0.7, 1.6,
+            (v) => setState(() => p.stickScale = v),
+            valueLabel: '${(p.stickScale * 100).round()}%', onEnd: p.save),
+        _slider('Stick opacity', p.stickOpacity, 0.4, 1.6,
+            (v) => setState(() => p.stickOpacity = v),
+            valueLabel: '${(p.stickOpacity * 100).round()}%', onEnd: p.save),
+        const SizedBox(height: 10),
+        // live preview — updates as you drag, so the settings are visible
+        SizedBox(
+          height: 132 * 1.6 + 30,
+          child: Center(
+            child: IgnorePointer(
+              child: Joystick(
+                onChange: (_) {},
+                onRelease: () {},
+                size: 132 * p.stickScale,
+                opacity: p.stickOpacity,
+                accent: kSafeEdge,
+              ),
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         GestureDetector(
           onTap: () => Navigator.of(context).push(
@@ -2114,8 +2138,9 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
     );
   }
 
-  Widget _slider(
-      String label, double val, double min, double max, ValueChanged<double> onCh) {
+  Widget _slider(String label, double val, double min, double max,
+      ValueChanged<double> onCh,
+      {String? valueLabel, VoidCallback? onEnd}) {
     return Row(
       children: [
         SizedBox(
@@ -2129,8 +2154,20 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
             max: max,
             activeColor: kAccent,
             onChanged: onCh,
+            // persist once on release instead of on every drag frame
+            onChangeEnd: onEnd == null ? null : (_) => onEnd(),
           ),
         ),
+        if (valueLabel != null)
+          SizedBox(
+            width: 46,
+            child: Text(valueLabel,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: kAccent,
+                    fontWeight: FontWeight.w800)),
+          ),
       ],
     );
   }

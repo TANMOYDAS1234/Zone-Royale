@@ -43,6 +43,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
   int _weaponSel = -1; // -1 = ALL_ARMS, else index into kWeaponOrder
   int _bo = 1; // best-of: 1 / 3 / 5
   bool _medkit = true, _grenades = true, _skills = true;
+  bool _bots = true; // fill empty slots with bots so a match is always playable
 
   static String _randomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -81,7 +82,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
   /// Nobody hosts — every client sends this identical standard ruleset, so the
   /// match plays the same no matter who arrives first.
   Map<String, dynamic> _standardConfig() {
-    final mode = kMatchModes[1]; // Clash · 25 players
+    final mode = kMatchModes[0]; // Skirmish · 10 players
     return {
       'world': mode.world,
       'maxPlayers': mode.players,
@@ -89,6 +90,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       'weapon': 'ALL_ARMS', // everyone brings their own loadout gun
       'rounds': 1, // single decisive round
       'startWi': WeaponId.smg.index,
+      // the game has no player base yet — bots keep quick match playable and
+      // give up their slots the moment real players join
+      'bots': true,
+      'botTarget': 8,
       'weapons': [
         for (final id in kWeaponOrder)
           {
@@ -139,6 +144,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       'medkit': _medkit,
       'grenades': _grenades,
       'skills': _skills,
+      // bots fill the empty slots so the room is playable before the game has
+      // a real player base; they step aside as friends join
+      'bots': _bots,
+      'botTarget': mode.players.clamp(2, 12),
     };
   }
 
@@ -419,6 +428,8 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                   () => setState(() => _grenades = !_grenades)),
               _toggleChip('HERO_SKILLS', _skills,
                   () => setState(() => _skills = !_skills)),
+              _toggleChip('FILL_WITH_BOTS', _bots,
+                  () => setState(() => _bots = !_bots)),
             ],
           ),
           const SizedBox(height: 6),
@@ -464,11 +475,13 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                                 letterSpacing: 1,
                                 fontWeight: FontWeight.w700)),
                         const Spacer(),
-                        Text('${c.players.length} / ${c.maxPlayers}',
+                        Text(
+                            '${c.humanCount} / ${c.maxPlayers}'
+                            '${c.fillBots ? '  +${c.players.length - c.humanCount} BOTS' : ''}',
                             style: TextStyle(
                                 fontFamily: _mono,
                                 color: kAccent,
-                                fontSize: 13,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w800)),
                       ],
                     ),
@@ -586,16 +599,18 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(me ? '${p.name}  (YOU)' : p.name.toUpperCase(),
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontFamily: _mono,
-                        color: Colors.white,
+                        color: p.bot ? Colors.white60 : Colors.white,
                         fontSize: 12,
                         fontWeight: FontWeight.w800)),
                 const SizedBox(height: 2),
-                Text('READY   ·   WINS ${p.wins}',
+                Text(p.bot ? 'AI OPPONENT' : 'READY   ·   WINS ${p.wins}',
                     style: TextStyle(
                         fontFamily: _mono,
-                        color: const Color(0xFF57E389).withValues(alpha: 0.9),
+                        color: p.bot
+                            ? Colors.white38
+                            : const Color(0xFF57E389).withValues(alpha: 0.9),
                         fontSize: 11)),
               ],
             ),
@@ -1339,35 +1354,54 @@ class _ArenaViewState extends State<_ArenaView>
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
-    // repaint every display frame (60/120 Hz) so prediction + interpolation
-    // render smoothly between the server's 30 Hz snapshots
-    return AnimatedBuilder(
-      animation: _frame,
-      builder: (context, _) => _stack(c),
+    return Stack(
+      children: [
+        // The world repaints every display frame (90 Hz) so prediction +
+        // interpolation look continuous between the server's 30 Hz snapshots.
+        // It sits in its own RepaintBoundary so it never drags the HUD along.
+        Positioned.fill(
+          child: RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _frame,
+              builder: (_, _) {
+                final me = c.me;
+                final spectating =
+                    me != null && !me.alive && c.matchWinner == null;
+                final cam = _camTarget(c);
+                return GestureDetector(
+                  onTap: spectating ? _cycleSpectate : null,
+                  child: CustomPaint(
+                    painter: _ArenaPainter(
+                      c,
+                      selfPos: _hasSelf && (me?.alive ?? false)
+                          ? Offset(_selfX, _selfY)
+                          : null,
+                      selfAim: _aim,
+                      camId: cam?.id ?? c.myId,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        // HUD/overlays only need to change when a snapshot lands (30 Hz).
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: c.rev,
+            builder: (_, _) => _overlays(c),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _stack(NetClient c) {
+  Widget _overlays(NetClient c) {
     final me = c.me;
     final spectating = me != null && !me.alive && c.matchWinner == null;
     final cam = _camTarget(c);
     return Stack(
       children: [
-        Positioned.fill(
-          child: GestureDetector(
-            onTap: spectating ? _cycleSpectate : null,
-            child: CustomPaint(
-              painter: _ArenaPainter(
-                c,
-                selfPos: _hasSelf && (me?.alive ?? false)
-                    ? Offset(_selfX, _selfY)
-                    : null,
-                selfAim: _aim,
-                camId: cam?.id ?? c.myId,
-              ),
-            ),
-          ),
-        ),
         // spectate banner
         if (spectating)
           Positioned(
@@ -1643,21 +1677,24 @@ class _ArenaPainter extends CustomPainter {
       }
     }
 
-    // bullets
+    // bullets — extrapolated along their velocity so they glide, not step
+    final age = c.snapAge;
     final bp = Paint()..color = kAccent;
     final bg = Paint()..color = kAccent.withValues(alpha: 0.35);
     for (final b in c.bullets) {
-      canvas.drawCircle(Offset(b.x, b.y), 10, bg);
-      canvas.drawCircle(Offset(b.x, b.y), 4.5, bp);
+      final o = b.at(age);
+      canvas.drawCircle(o, 10, bg);
+      canvas.drawCircle(o, 4.5, bp);
     }
 
-    // flying grenades
+    // flying grenades (also extrapolated)
     for (final g in c.nades) {
-      canvas.drawCircle(Offset(g.x, g.y), 14,
-          Paint()..color = const Color(0xFF6ABF5A).withValues(alpha: 0.25));
-      canvas.drawCircle(Offset(g.x, g.y), 7, Paint()..color = const Color(0xFF2E7D32));
+      final o = g.at(age);
       canvas.drawCircle(
-          Offset(g.x, g.y),
+          o, 14, Paint()..color = const Color(0xFF6ABF5A).withValues(alpha: 0.25));
+      canvas.drawCircle(o, 7, Paint()..color = const Color(0xFF2E7D32));
+      canvas.drawCircle(
+          o,
           7,
           Paint()
             ..style = PaintingStyle.stroke

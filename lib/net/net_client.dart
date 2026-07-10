@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 
@@ -9,11 +10,11 @@ class NetPlayer {
   final int id;
   final double x, y, aim;
   final int hp, kills, wins, wi, nades, cd;
-  final bool alive, shield, dash;
+  final bool alive, shield, dash, bot;
   final String name;
   const NetPlayer(this.id, this.x, this.y, this.aim, this.hp, this.kills,
       this.wins, this.wi, this.nades, this.cd, this.alive, this.shield,
-      this.dash, this.name);
+      this.dash, this.bot, this.name);
 
   factory NetPlayer.from(Map m) => NetPlayer(
         (m['id'] as num).toInt(),
@@ -29,13 +30,17 @@ class NetPlayer {
         m['alive'] == true,
         m['sh'] == true,
         m['dsh'] == true,
+        m['bot'] == true,
         (m['name'] as String?) ?? '',
       );
 }
 
 class NetBullet {
-  final double x, y;
-  const NetBullet(this.x, this.y);
+  final double x, y, vx, vy;
+  const NetBullet(this.x, this.y, [this.vx = 0, this.vy = 0]);
+
+  /// Position [age] seconds after the snapshot it came from.
+  Offset at(double age) => Offset(x + vx * age, y + vy * age);
 }
 
 /// A rectangular obstacle (building/cover). x,y is the centre.
@@ -87,6 +92,17 @@ class NetClient {
 
   // room rules (host-controlled)
   bool allowMedkits = true, allowGrenades = true, allowSkills = true;
+  bool fillBots = true;
+  int botTarget = 8;
+
+  /// Real players only — bots don't occupy the room's player limit.
+  int get humanCount {
+    var n = 0;
+    for (final p in players) {
+      if (!p.bot) n++;
+    }
+    return n;
+  }
 
   // ---- snapshot interpolation (renders smoothly between server ticks) ----
   final Map<int, List<double>> _prevP = {}; // id -> [x, y, aim]
@@ -116,10 +132,18 @@ class NetClient {
     ];
   }
 
+  /// Seconds since the last snapshot — used to extrapolate projectiles.
+  double get snapAge => _snapAt == 0
+      ? 0
+      : ((DateTime.now().millisecondsSinceEpoch - _snapAt) / 1000.0)
+          .clamp(0.0, 0.15);
+
   void _recordSnapshot() {
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_snapAt != 0) {
-      _snapDt = (now - _snapAt).clamp(16, 250).toDouble();
+      // exponential moving average: network jitter shouldn't wobble the lerp
+      final measured = (now - _snapAt).clamp(16, 250).toDouble();
+      _snapDt = _snapDt * 0.8 + measured * 0.2;
     }
     _snapAt = now;
     _prevP
@@ -242,6 +266,8 @@ class NetClient {
           allowMedkits = m['medkit'] != false;
           allowGrenades = m['grenades'] != false;
           allowSkills = m['skills'] != false;
+          fillBots = m['bots'] != false;
+          botTarget = (m['botTarget'] as num?)?.toInt() ?? botTarget;
           final obs = m['obstacles'];
           if (obs is List) {
             obstacles = [
@@ -280,13 +306,23 @@ class NetClient {
           rounds = (m['rounds'] as num?)?.toInt() ?? rounds;
           bullets = [
             for (final b in (m['bullets'] as List))
-              NetBullet((b['x'] as num).toDouble(), (b['y'] as num).toDouble())
+              NetBullet(
+                (b['x'] as num).toDouble(),
+                (b['y'] as num).toDouble(),
+                (b['vx'] as num?)?.toDouble() ?? 0,
+                (b['vy'] as num?)?.toDouble() ?? 0,
+              )
           ];
           final nd = m['nades'];
           if (nd is List) {
             nades = [
               for (final g in nd)
-                NetBullet((g['x'] as num).toDouble(), (g['y'] as num).toDouble())
+                NetBullet(
+                  (g['x'] as num).toDouble(),
+                  (g['y'] as num).toDouble(),
+                  (g['vx'] as num?)?.toDouble() ?? 0,
+                  (g['vy'] as num?)?.toDouble() ?? 0,
+                )
             ];
           }
           final lt = m['loot'];
