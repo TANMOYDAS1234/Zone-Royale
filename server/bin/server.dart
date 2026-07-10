@@ -1016,6 +1016,11 @@ Future<void> main() async {
                   room.broadcast(room.cfgMsg);
                 }
                 break;
+              case 'ping': // echo straight back so the client can time the RTT
+                try {
+                  ws.add(jsonEncode({'type': 'pong', 't': m['t']}));
+                } catch (_) {}
+                break;
               case 'input':
                 p.roomRef?.onInput(p, m);
                 break;

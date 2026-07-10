@@ -15,6 +15,12 @@ services:
     name: zone-royale
     runtime: docker
     plan: free
+    # Region dominates ping far more than any code optimisation. Pick the one
+    # closest to your players — from India, Singapore is ~60-90ms vs ~230-280ms
+    # to Oregon (the default). Render CANNOT change a live service's region:
+    # you must delete the service and recreate it from this Blueprint.
+    #   options: oregon | ohio | virginia | frankfurt | singapore
+    region: singapore
     rootDir: server
     dockerfilePath: Dockerfile
     healthCheckPath: /

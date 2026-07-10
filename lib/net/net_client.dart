@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -162,6 +163,20 @@ class NetClient {
   int _hero = 0;
   int _startWi = 5;
   bool _quick = false;
+  Timer? _pinger;
+
+  /// Smoothed round-trip time to the server, in ms. 0 until the first pong.
+  int pingMs = 0;
+
+  void _startPinging() {
+    _pinger?.cancel();
+    _pinger = Timer.periodic(const Duration(milliseconds: 1500), (_) {
+      try {
+        _ws?.add(jsonEncode(
+            {'type': 'ping', 't': DateTime.now().millisecondsSinceEpoch}));
+      } catch (_) {}
+    });
+  }
 
   /// The room the server actually placed us in (quick match may overflow into
   /// PUBLIC1, PUBLIC2, …). Empty until the first `roomcfg` arrives.
@@ -256,6 +271,7 @@ class NetClient {
           world = (m['world'] as num).toDouble();
           connected = true;
           status = 'live';
+          _startPinging();
           _bump();
           break;
         case 'roomcfg':
@@ -298,6 +314,15 @@ class NetClient {
           matchWinner = (m['name'] as String?) ?? '—';
           roundBanner = null;
           _bump();
+          break;
+        case 'pong':
+          final sent = (m['t'] as num?)?.toInt();
+          if (sent != null) {
+            final rtt = DateTime.now().millisecondsSinceEpoch - sent;
+            // smooth it so the readout doesn't flicker on a single spike
+            pingMs = pingMs == 0 ? rtt : ((pingMs * 3 + rtt) ~/ 4);
+            _bump();
+          }
           break;
         case 'full':
           _fail('Room is full (${m['max']} players max).');
@@ -416,6 +441,9 @@ class NetClient {
   /// server has processed our disconnect, the old room still has us in it, so
   /// it is reused and the new settings are ignored.
   Future<void> close() async {
+    _pinger?.cancel();
+    _pinger = null;
+    pingMs = 0;
     final ws = _ws;
     _ws = null;
     connected = false;

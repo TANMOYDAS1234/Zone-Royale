@@ -78,38 +78,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     }
   }
 
-  /// QUICK MATCH: the server places you in a public room with a free slot.
-  /// Nobody hosts — every client sends this identical standard ruleset, so the
-  /// match plays the same no matter who arrives first.
-  Map<String, dynamic> _standardConfig() {
-    final mode = kMatchModes[0]; // Skirmish · 10 players
-    return {
-      'world': mode.world,
-      'maxPlayers': mode.players,
-      'map': 'RANDOM',
-      'weapon': 'ALL_ARMS', // everyone brings their own loadout gun
-      'rounds': 1, // single decisive round
-      'startWi': WeaponId.smg.index,
-      // the game has no player base yet — bots keep quick match playable and
-      // give up their slots the moment real players join
-      'bots': true,
-      'botTarget': 8,
-      'botDifficulty': 1, // normal — still clearly weaker than a human
-      'weapons': [
-        for (final id in kWeaponOrder)
-          {
-            'i': id.index,
-            'dmg': kWeapons[id]!.damage,
-            'speed': kWeapons[id]!.bulletSpeed,
-            'range': kWeapons[id]!.range,
-          }
-      ],
-      'medkit': true,
-      'grenades': true,
-      'skills': true,
-    };
-  }
-
+  /// QUICK MATCH: the server drops you into a public room that has a free slot,
+  /// opening a new one if they're all full. If you're the one who opens it, YOUR
+  /// rules apply (same as a custom room). If you join someone else's room in
+  /// progress, you inherit theirs — the lobby always shows the rules in force.
   Future<void> _quickMatch() async => _connect(quick: true);
 
   String get _mapName =>
@@ -180,8 +152,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       _client = c;
       if (!keepDeployed) _deployed = false;
     });
+    // Your rules travel with you. The server only applies them if you're the
+    // first human into the room, so you can never override an in-progress match.
     await c.connect(url, name, room,
-        config: _wasQuick ? _standardConfig() : _buildConfig(),
+        config: _buildConfig(),
         hero: Profile.instance.hero,
         startWi: Profile.instance.startWeapon.index,
         quick: _wasQuick);
@@ -591,6 +565,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
           row('Player Limit', '${c.maxPlayers}'),
           row('Bots', _botsSummary(c)),
           row('Equipment', _equipSummary(c)),
+          row('Ping', c.pingMs == 0 ? 'measuring…' : '${c.pingMs} ms'),
         ],
       ),
     );
@@ -1084,6 +1059,11 @@ class _ArenaViewState extends State<_ArenaView>
   // ---- spectate / kill-cam ----
   int _specIdx = 0;
 
+  // ---- live perf readout (so "smooth" is measurable, not a feeling) ----
+  int _fps = 0;
+  int _frames = 0;
+  Duration _fpsWindow = Duration.zero;
+
   static const double _speed = 250; // must match the server's playerSpeed
 
   @override
@@ -1121,6 +1101,15 @@ class _ArenaViewState extends State<_ArenaView>
         ? 1 / 60
         : ((now - _last).inMicroseconds / 1e6).clamp(0.0, 0.05);
     _last = now;
+
+    // rolling FPS over a 500ms window
+    _frames++;
+    if (now - _fpsWindow >= const Duration(milliseconds: 500)) {
+      final secs = (now - _fpsWindow).inMicroseconds / 1e6;
+      if (_fpsWindow != Duration.zero) _fps = (_frames / secs).round();
+      _fpsWindow = now;
+      _frames = 0;
+    }
     final c = widget.client;
     final me = c.me;
 
@@ -1479,7 +1468,17 @@ class _ArenaViewState extends State<_ArenaView>
               _pill('ALIVE  ${c.aliveCount}'),
               if (c.rounds > 1)
                 _pill('ROUND  ${c.round}/${c.rounds * 2 - 1}', color: kAccent),
-              _pill('WINS  ${me?.wins ?? 0}'),
+              // measurable smoothness + network health
+              _pill('$_fps FPS',
+                  color: _fps >= 80
+                      ? const Color(0xFF57E389)
+                      : (_fps >= 50 ? kAccent : kAccent2)),
+              _pill(c.pingMs == 0 ? '— MS' : '${c.pingMs} MS',
+                  color: c.pingMs == 0
+                      ? Colors.white54
+                      : (c.pingMs < 100
+                          ? const Color(0xFF57E389)
+                          : (c.pingMs < 200 ? kAccent : kAccent2))),
               GestureDetector(
                 onTap: widget.onLeave,
                 child: _pill('LEAVE', color: kAccent2),
