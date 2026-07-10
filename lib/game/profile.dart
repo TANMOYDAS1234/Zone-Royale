@@ -165,6 +165,9 @@ class Profile {
       if (w != null && w >= 0 && w < WeaponId.values.length) {
         startWeapon = WeaponId.values[w];
       }
+      // one-time migration: the old default was Pistol — bump profiles that
+      // never explicitly changed it up to SMG (the new default).
+      if ((p.getInt('wver') ?? 0) < 1) startWeapon = WeaponId.smg;
       fireAuto = p.getBool('fireAuto') ?? true;
       matchMode = p.getInt('matchMode') ?? 0;
       hero = p.getInt('hero') ?? 0;
@@ -216,6 +219,7 @@ class Profile {
       await p.setInt('skin', skin);
       await p.setInt('accessory', accessory);
       await p.setInt('startWeapon', startWeapon.index);
+      await p.setInt('wver', 1); // SMG-default migration applied
       await p.setBool('fireAuto', fireAuto);
       await p.setInt('matchMode', matchMode);
       await p.setInt('hero', hero);

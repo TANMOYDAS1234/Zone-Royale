@@ -1,13 +1,20 @@
 # 🎮 Zone Royale — Complete Guide (Workflow + Codebase)
 
 A lightweight, addictive top-down **battle royale** built with Flutter + Flame.
-Runs on any Android phone, single codebase, offline single-player (fair bots) with
-a multiplayer server prototype included.
+Runs on any Android phone, single codebase: offline single-player (fair bots) and
+**live online custom rooms** against real players (authoritative server, deployed
+free on Render).
 
 ---
 
 ## Changelog (latest first)
 
+- **Custom Room = full BR online** — the room match now has feature parity with a solo match, all server-authoritative: **map cover** (buildings + sliding collision + bullets stop at walls), a **shrinking gas zone** (damages you outside, resets each round), **loot** (weapon crates that swap your gun + medkits that heal), **grenades** (throw button → flying nade with radial falloff blast), and **hero skills** (dash / shield / frenzy / medic / grenadier, 12s cd). Plus **rounds** (BO1/3/5), per-player weapons, and names above heads.
+- **CUSTOM ROOM lobby UI** (`CUSTOM_ROOM_COMMAND`) — host configures MAP & SECTOR, WEAPON TYPE, ROUNDS, PLAYER LIMIT, and equipment toggles; a lobby shows the live CONNECTED_PLAYERS roster before **START MISSION**. ARMORY/FACTION/INTEL bottom-nav tabs route to Shop/Profile/Missions.
+- **Launcher icon** — the crosshair app logo is rendered to a real PNG by `tool/gen_icon.dart` (pure-Dart pixel renderer + PNG encoder) and wired via `flutter_launcher_icons`.
+- **SMG is the default weapon** (per-player, dynamic) — profiles are migrated once from the old Pistol default to SMG; ALL_ARMS rooms spawn each player with their own loadout weapon.
+- **Draggable HP bar** — the HP bar joins the drag control-customizer (7 movable HUD elements now).
+- **Live server** — deployed on Render at `wss://zone-royale.onrender.com` (auto-deploys on every push).
 - **Full premium UI reskin** — every screen (Home, Missions/ARMORY, Shop, Profile/OPERATOR, Match Summary) matches the Stitch mockups: shared tactical header (crosshair logo + rank + coins), a unified bottom nav (HOME/SHOP/MISSIONS/PROFILE), animated boot splash, and the code-drawn crosshair logo. Character previews use the **real 2D operator** art (honest — no fake 3D renders).
 - **Fix: INTERNET permission** was missing from the release manifest, so multiplayer failed with "could not connect" on release APKs. Added to `android/app/src/main/AndroidManifest.xml`.
 - **Multiplayer terminal** — connect screen defaults to the live Render server (`wss://zone-royale.onrender.com`); ARMORY/FACTION/INTEL tabs route to Shop/Profile/Missions.
@@ -131,13 +138,15 @@ lib/
     sfx.dart             Audio: loads assets/sfx/*.wav via AssetSource + haptics
     mathx.dart           Vector helpers (angleOf, fromAngle, safeNorm, collision)
   net/
-    net_client.dart      NetClient — WebSocket connect, send input, parse snapshots
-    net_arena.dart       MultiplayerScreen — connect form + live networked arena
+    net_client.dart      NetClient — WebSocket connect, send input, parse room snapshots
+    net_arena.dart       MultiplayerScreen — custom-room config + lobby + live arena
   ui/
     game_ui.dart         HUD, floating touch controls, minimap, overlays, ControlsEditor (drag layout)
 tool/
   gen_sfx.dart           Bakes the procedural SFX to assets/sfx/*.wav
+  gen_icon.dart          Renders the crosshair launcher icon to assets/icon.png
 assets/sfx/              10 tiny generated .wav sound effects
+assets/icon.png          Launcher icon source (wired via flutter_launcher_icons)
 server/
   bin/server.dart        Authoritative WebSocket server (movement/bullets/hits + rooms)
   Dockerfile             Render.com deploy image
@@ -168,29 +177,42 @@ Everything is bounds-checked and decode-safe.
 
 ---
 
-## 8. Multiplayer — LIVE (client + server)
+## 8. Multiplayer — Custom Rooms (LIVE, full BR)
 
-Online play works end-to-end: an **authoritative server** (`server/`) runs the
+Online play is a **BGMI-style custom room** with full feature parity to a solo
+match, all server-authoritative: an **authoritative server** (`server/`) runs the
 one true simulation and a **client** (`lib/net/`) renders it.
+
+**Room match features (all server-side):** map cover + collision, shrinking gas
+zone, loot (weapon crates + medkits), grenades (throw + radial blast), hero
+skills (dash/shield/frenzy/medic/grenadier), rounds (BO1/3/5) + win logic,
+per-player weapons, names + HP above heads. Deployed live at
+`wss://zone-royale.onrender.com`.
+
+### Flow
+
+**CUSTOM ROOM button** (start menu) → **config screen** (`CUSTOM_ROOM_COMMAND`:
+map / weapon / rounds / player-limit / equipment) → **lobby** (live
+CONNECTED_PLAYERS roster + START MISSION) → **arena**. Same room code = same
+match; a new code creates a room you host (host's config sets the rules).
 
 ### Client (`lib/net/`)
 
 - `net_client.dart` — `NetClient`: connects over a `dart:io` WebSocket (no extra
-  dependency; works on Android/iOS/desktop), sends `{type:input,...}` at ~30 Hz,
-  parses `{type:state,...}` snapshots, exposes `players`/`bullets`/`me` and a
-  `rev` `ValueNotifier` that bumps on each snapshot.
-- `net_arena.dart` — `MultiplayerScreen`: a connect form (server address + room
-  code + name), then the live twin-stick arena. Renders every real player with
-  the same `drawOperator` art as single-player, plus bullets, HP bars, names,
-  a "YOU" ring, an ALIVE/KILLS HUD, and an ELIMINATED banner.
-- Entry point: the **MULTIPLAYER** button on the start menu
-  (`Navigator.push(MultiplayerScreen())`).
+  dependency), sends input at ~30 Hz (incl. `nade`/`skill`), and parses snapshots
+  into `players`/`bullets`/`obstacles`/`loot`/`nades`/`zone` + room config (map,
+  weapon, rounds) + round/winner banners. `rev` `ValueNotifier` bumps per snapshot.
+- `net_arena.dart` — `MultiplayerScreen`: the config + lobby + live arena. Renders
+  every real player (`drawOperator`, current weapon), cover, loot crates/medkits,
+  grenades, the gas zone, shields, names/HP, a live ALIVE/ROUND/WINS HUD, plus 💣
+  grenade and ⚡ skill buttons.
 
 ### Server (`server/bin/server.dart`)
 
-Pure `dart:io`. Movement + bullets + hits + kills at 20 Hz, broadcast to all
-clients. **Custom rooms:** clients that send the same `room` code share a match
-(empty code → `PUBLIC`); rooms auto-close when empty.
+Pure `dart:io`, 20 Hz. Per-room config (arena size, gun stats + full weapon
+table, map, rounds); generates obstacles + loot; simulates movement/collision,
+bullets, grenades, gas zone, skills, and round/match wins. **Custom rooms:**
+same `room` code shares a match (empty → `PUBLIC`); rooms auto-close when empty.
 
 **Run it (free LAN play):**
 
@@ -199,15 +221,16 @@ cd server && dart pub get && dart run bin/server.dart   # listens on :8080
 ```
 
 Find your PC's IPv4 (`ipconfig`, e.g. `192.168.1.5`), then on a phone on the
-same Wi‑Fi open MULTIPLAYER and enter `ws://192.168.1.5:8080`. Allow Dart
+same Wi‑Fi open CUSTOM ROOM → Advanced → `ws://192.168.1.5:8080`. Allow Dart
 through the Windows firewall if prompted.
 
 **Message protocol (JSON):**
 
-- Client → server: `{"type":"join","name":"Ava","room":"NIGHT"}`, then
-  `{"type":"input","mx":..,"my":..,"aim":..,"fire":true}`.
-- Server → client: `{"type":"welcome","id":N,"world":3200}` then 20 Hz
-  `{"type":"state","players":[{id,x,y,aim,hp,alive,kills,name}],"bullets":[{x,y}]}`.
+- Client → server: `{"type":"join","name","room","hero","startWi","config":{...}}`,
+  then `{"type":"input","mx","my","aim","fire","nade","skill"}`.
+- Server → client: `welcome` → `roomcfg` (rules + obstacles) → 20 Hz `state`
+  (`players[{id,x,y,aim,hp,alive,kills,wins,wi,nades,sh,cd}]`, `bullets`, `nades`,
+  `loot`, `zone`) → `round` / `matchover` events.
 
 ### Deploy to the internet — Render.com (free)
 
