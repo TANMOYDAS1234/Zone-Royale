@@ -44,7 +44,51 @@ class Profile {
       hudPos[k] ?? kDefaultHud[k] ?? const [0.5, 0.5];
   void setHudPos(String k, double x, double y) =>
       hudPos[k] = [x.clamp(0.05, 0.95), y.clamp(0.10, 0.92)];
-  void resetHud() => hudPos.clear();
+
+  // Per-control size + opacity (BGMI-style). 1.0 = default size / fully opaque.
+  //
+  // The range is per control, not global, because the limits differ:
+  //  · floor  — Android's minimum touch target is 48dp, so a 64px button can
+  //             only shrink to ~0.75 before it stops being reliably tappable.
+  //             The 132px sticks can go much smaller. The HP bar isn't
+  //             interactive at all, so it can shrink freely.
+  //  · ceiling — two 132px sticks + padding already fill a 360dp-wide screen,
+  //             so sticks cap ~1.15; the small buttons have room to grow more.
+  static const Map<String, List<double>> kScaleRange = {
+    'move': [0.60, 1.15],
+    'aim': [0.60, 1.15],
+    'skill': [0.75, 1.40],
+    'nade': [0.80, 1.40],
+    'reload': [0.75, 1.40],
+    'fire': [0.75, 1.40],
+    'hp': [0.50, 1.50],
+  };
+  static const List<double> kDefaultScaleRange = [0.70, 1.25];
+  static const double kMinOpacity = 0.35, kMaxOpacity = 1.0;
+  final Map<String, double> hudScale = {};
+  final Map<String, double> hudOpacity = {};
+
+  static List<double> scaleRangeOf(String k) =>
+      kScaleRange[k] ?? kDefaultScaleRange;
+
+  double hudScaleOf(String k) {
+    final r = scaleRangeOf(k);
+    return (hudScale[k] ?? 1.0).clamp(r[0], r[1]);
+  }
+  double hudOpacityOf(String k) =>
+      (hudOpacity[k] ?? 1.0).clamp(kMinOpacity, kMaxOpacity);
+  void setHudScale(String k, double v) {
+    final r = scaleRangeOf(k);
+    hudScale[k] = v.clamp(r[0], r[1]);
+  }
+  void setHudOpacity(String k, double v) =>
+      hudOpacity[k] = v.clamp(kMinOpacity, kMaxOpacity);
+
+  void resetHud() {
+    hudPos.clear();
+    hudScale.clear();
+    hudOpacity.clear();
+  }
 
   // ---- lifetime stats ----
   int matches = 0;
@@ -204,6 +248,29 @@ class Profile {
           if (x != null && y != null) hudPos[parts[0]] = [x, y];
         }
       }
+      void readMap(String key, Map<String, double> into) {
+        final list = p.getStringList(key);
+        if (list == null) return;
+        into.clear();
+        for (final e in list) {
+          final i = e.lastIndexOf(':');
+          if (i <= 0) continue;
+          final v = double.tryParse(e.substring(i + 1));
+          if (v != null) into[e.substring(0, i)] = v;
+        }
+      }
+
+      readMap('hudScale', hudScale);
+      readMap('hudOpacity', hudOpacity);
+      // migrate the old global stick sliders into the per-control model
+      if (hudScale.isEmpty && stickScale != 1.0) {
+        hudScale['move'] = stickScale;
+        hudScale['aim'] = stickScale;
+      }
+      if (hudOpacity.isEmpty && stickOpacity != 1.0) {
+        hudOpacity['move'] = stickOpacity;
+        hudOpacity['aim'] = stickOpacity;
+      }
     } catch (_) {
       // First run or storage unavailable — defaults are fine.
     }
@@ -239,6 +306,10 @@ class Profile {
       await p.setStringList('owned', owned.toList());
       await p.setStringList('hudPos',
           hudPos.entries.map((e) => '${e.key}:${e.value[0]}:${e.value[1]}').toList());
+      await p.setStringList('hudScale',
+          hudScale.entries.map((e) => '${e.key}:${e.value}').toList());
+      await p.setStringList('hudOpacity',
+          hudOpacity.entries.map((e) => '${e.key}:${e.value}').toList());
     } catch (_) {
       // Ignore write failures — stats are best-effort.
     }

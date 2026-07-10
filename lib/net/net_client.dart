@@ -10,11 +10,11 @@ class NetPlayer {
   final int id;
   final double x, y, aim;
   final int hp, kills, wins, wi, nades, cd;
-  final bool alive, shield, dash, bot;
+  final bool alive, shield, dash, bot, ready;
   final String name;
   const NetPlayer(this.id, this.x, this.y, this.aim, this.hp, this.kills,
       this.wins, this.wi, this.nades, this.cd, this.alive, this.shield,
-      this.dash, this.bot, this.name);
+      this.dash, this.bot, this.ready, this.name);
 
   factory NetPlayer.from(Map m) => NetPlayer(
         (m['id'] as num).toInt(),
@@ -31,6 +31,7 @@ class NetPlayer {
         m['sh'] == true,
         m['dsh'] == true,
         m['bot'] == true,
+        m['rdy'] == true,
         (m['name'] as String?) ?? '',
       );
 }
@@ -94,6 +95,8 @@ class NetClient {
   bool allowMedkits = true, allowGrenades = true, allowSkills = true;
   bool fillBots = true;
   int botTarget = 8;
+  int botDifficulty = 1;
+  bool started = false; // has anyone deployed yet?
 
   /// Real players only — bots don't occupy the room's player limit.
   int get humanCount {
@@ -268,6 +271,8 @@ class NetClient {
           allowSkills = m['skills'] != false;
           fillBots = m['bots'] != false;
           botTarget = (m['botTarget'] as num?)?.toInt() ?? botTarget;
+          botDifficulty = (m['botDifficulty'] as num?)?.toInt() ?? botDifficulty;
+          started = m['started'] == true;
           final obs = m['obstacles'];
           if (obs is List) {
             obstacles = [
@@ -364,12 +369,21 @@ class NetClient {
     return null;
   }
 
+  /// Alive combatants — lobby players aren't in the fight yet.
   int get aliveCount {
     var n = 0;
     for (final p in players) {
-      if (p.alive) n++;
+      if (p.alive && p.ready) n++;
     }
     return n;
+  }
+
+  /// START MISSION — tells the server to drop us into the fight. Until this is
+  /// sent we sit in the lobby: not shootable, not counted for round end.
+  void sendReady() {
+    try {
+      _ws?.add(jsonEncode({'type': 'ready'}));
+    } catch (_) {}
   }
 
   void sendInput(double mx, double my, double aim, bool fire,

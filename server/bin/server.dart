@@ -77,10 +77,19 @@ class Player {
   bool fire = false, alive = true;
   int kills = 0;
   int roundWins = 0;
-  // bot brain
+  /// Humans only join the fight after pressing START MISSION. Until then they
+  /// sit in the lobby: not shootable, not targeted, not counted for round end.
+  bool ready = false;
+  // bot brain + difficulty profile (bots are deliberately weaker than a human)
   double fireCd = 0;
   double wanderT = 0;
   double wx = 0, wy = 0;
+  double aimErr = 0.2; // radians of aim jitter
+  double fireMin = 0.8, fireMax = 1.4; // seconds between shots
+  double vision = 520; // how far a bot can see you
+  double spdMul = 0.85; // fraction of the human run speed
+  double dmgMul = 0.5; // fraction of the weapon's damage
+  double nadeChance = 0, skillChance = 0;
   // current weapon (loot can swap it)
   int wi = 5;
   double dmg = bulletDamage;
@@ -166,6 +175,21 @@ class Room {
   bool allowSkills = true;
   bool fillBots = true; // top the room up with bots so it's always playable
   int botTarget = 8; // total bodies (humans + bots) to aim for
+  int botDifficulty = 1; // 0 easy · 1 normal · 2 hard — all weaker than a human
+
+  /// Humans who have pressed START MISSION. Combat doesn't run until >= 1.
+  int get readyHumans {
+    var n = 0;
+    for (final p in players) {
+      if (!p.isBot && p.ready) n++;
+    }
+    return n;
+  }
+
+  bool get started => readyHumans > 0;
+
+  /// Players actually in the fight (ready humans + bots).
+  bool _inPlay(Player p) => p.isBot || p.ready;
 
   /// Only real players count toward the room's PLAYER LIMIT.
   int get humans {
@@ -195,14 +219,45 @@ class Room {
   static const double _zoneShrink = 95; // seconds to reach the final ring
   static const double _zoneDps = 7; // damage/second outside the safe circle
 
+  /// The host's MAP choice actually reshapes the arena: how many pieces of
+  /// cover there are and how big they get.
   void _genMap() {
     obstacles.clear();
-    final n = (world * world / 340000).round().clamp(6, 40);
+    final base = (world * world / 340000).round();
+    double density, minHalf, maxHalf;
+    switch (map.toUpperCase()) {
+      case 'URBAN BUILDINGS':
+      case 'URBAN':
+        density = 1.15; // dense blocks
+        minHalf = 40;
+        maxHalf = 100;
+        break;
+      case 'FOREST':
+        density = 1.8; // lots of small trees
+        minHalf = 16;
+        maxHalf = 34;
+        break;
+      case 'COMPOUND':
+        density = 1.35; // long walls / rooms
+        minHalf = 26;
+        maxHalf = 120;
+        break;
+      case 'BADLANDS':
+        density = 0.65; // sparse, chunky boulders
+        minHalf = 55;
+        maxHalf = 120;
+        break;
+      default: // RANDOM
+        density = 1.0;
+        minHalf = 30;
+        maxHalf = 85;
+    }
+    final n = (base * density).round().clamp(6, 60);
     var tries = 0;
     while (obstacles.length < n && tries < n * 6) {
       tries++;
-      final hw = 30 + _rng.nextDouble() * 55;
-      final hh = 30 + _rng.nextDouble() * 55;
+      final hw = minHalf + _rng.nextDouble() * (maxHalf - minHalf);
+      final hh = minHalf + _rng.nextDouble() * (maxHalf - minHalf);
       final x = 60 + _rng.nextDouble() * (world - 120);
       final y = 60 + _rng.nextDouble() * (world - 120);
       // keep the exact centre a bit clearer
@@ -226,13 +281,57 @@ class Room {
     'BLAZE', 'FROST', 'DELTA', 'ZERO', 'TITAN', 'ROGUE', 'STORM', 'ATLAS',
   ];
 
+  /// Bots are tuned to be clearly *weaker* than a human: less damage, slower
+  /// fire, shakier aim, shorter sight, slower legs. Difficulty scales those,
+  /// and each bot gets a little variance so they don't feel cloned.
+  void _applyBotTier(Player b) {
+    switch (botDifficulty) {
+      case 0: // easy
+        b.aimErr = 0.30;
+        b.fireMin = 1.0;
+        b.fireMax = 1.8;
+        b.vision = 460;
+        b.spdMul = 0.78;
+        b.dmgMul = 0.40;
+        b.nadeChance = 0;
+        b.skillChance = 0;
+        break;
+      case 2: // hard
+        b.aimErr = 0.12;
+        b.fireMin = 0.55;
+        b.fireMax = 1.0;
+        b.vision = 680;
+        b.spdMul = 0.95;
+        b.dmgMul = 0.75;
+        b.nadeChance = 0.30;
+        b.skillChance = 0.35;
+        break;
+      default: // normal
+        b.aimErr = 0.20;
+        b.fireMin = 0.75;
+        b.fireMax = 1.35;
+        b.vision = 560;
+        b.spdMul = 0.86;
+        b.dmgMul = 0.55;
+        b.nadeChance = 0.12;
+        b.skillChance = 0.15;
+    }
+    // per-bot variance (±10%) so a squad isn't a hive mind
+    final v = 0.9 + _rng.nextDouble() * 0.2;
+    b.dmgMul *= v;
+    b.spdMul = (b.spdMul * v).clamp(0.6, 0.98); // never outrun a human
+    b.aimErr /= v;
+  }
+
   void _addBot() {
     final id = _nextId++;
     final b = Player(id, null, 0, 0, 'BOT ${_botNames[id % _botNames.length]}');
+    b.ready = true; // bots are always in the fight
     b.hero = _rng.nextInt(5);
     b.baseWi = weaponTable.isEmpty
         ? startWi
         : weaponTable[_rng.nextInt(weaponTable.length)]['i'] as int;
+    _applyBotTier(b);
     b.roomRef = this;
     players.add(b);
     _spawn(b);
@@ -241,7 +340,8 @@ class Room {
   /// Bots fill the gap between the human count and [botTarget]; they step aside
   /// as real players arrive.
   void _syncBots() {
-    if (!fillBots) {
+    // no bots while the room is still warming up in the lobby
+    if (!fillBots || !started) {
       players.removeWhere((p) => p.isBot);
       return;
     }
@@ -277,11 +377,11 @@ class Room {
         continue;
       }
 
-      // 2) hunt the nearest living opponent
+      // 2) hunt the nearest living opponent that's actually in the fight
       Player? target;
       var best = 1e9;
       for (final p in players) {
-        if (p.id == b.id || !p.alive) continue;
+        if (p.id == b.id || !p.alive || !_inPlay(p)) continue;
         final dx = p.x - b.x, dy = p.y - b.y;
         final d = dx * dx + dy * dy;
         if (d < best) {
@@ -290,24 +390,42 @@ class Room {
         }
       }
       final dist = sqrt(best);
-      if (target != null && dist < 720) {
+      if (target != null && dist < b.vision) {
         final dx = target.x - b.x, dy = target.y - b.y;
-        b.aim = atan2(dy, dx) + (_rng.nextDouble() - 0.5) * 0.12; // slight sway
+        // shaky aim — the main reason bots lose fights to a human
+        b.aim = atan2(dy, dx) + (_rng.nextDouble() - 0.5) * b.aimErr * 2;
         // keep a fighting distance
         final move = dist > 300 ? 1.0 : (dist < 130 ? -1.0 : 0.0);
         b.mx = (dx / dist) * move;
         b.my = (dy / dist) * move;
-        if (dist < b.bRange && b.fireCd <= 0 && !matchOver) {
-          b.fireCd = 0.45 + _rng.nextDouble() * 0.45;
-          bullets.add(Bullet(
-            b.x + cos(b.aim) * hitRadius,
-            b.y + sin(b.aim) * hitRadius,
-            cos(b.aim) * b.bSpeed,
-            sin(b.aim) * b.bSpeed,
-            b.id,
-            b.dmg,
-            b.bRange,
-          ));
+
+        if (b.fireCd <= 0 && !matchOver) {
+          b.fireCd = b.fireMin + _rng.nextDouble() * (b.fireMax - b.fireMin);
+          final roll = _rng.nextDouble();
+          if (allowGrenades && b.grenades > 0 && dist > 220 && dist < 520 &&
+              roll < b.nadeChance) {
+            b.grenades--;
+            grenades.add(Grenade(
+              b.x + cos(b.aim) * hitRadius,
+              b.y + sin(b.aim) * hitRadius,
+              cos(b.aim) * nadeSpeed,
+              sin(b.aim) * nadeSpeed,
+              nadeFuse,
+              b.id,
+            ));
+          } else if (allowSkills && b.skillCd <= 0 && roll < b.skillChance) {
+            _activateSkill(b); // dash in, shield up, etc.
+          } else if (dist < b.bRange) {
+            bullets.add(Bullet(
+              b.x + cos(b.aim) * hitRadius,
+              b.y + sin(b.aim) * hitRadius,
+              cos(b.aim) * b.bSpeed,
+              sin(b.aim) * b.bSpeed,
+              b.id,
+              b.dmg * b.dmgMul, // bots hit softer than a human
+              b.bRange,
+            ));
+          }
         }
         continue;
       }
@@ -389,6 +507,8 @@ class Room {
     allowSkills = cfg['skills'] != false;
     fillBots = cfg['bots'] != false;
     botTarget = ((cfg['botTarget'] as num?)?.toInt() ?? botTarget).clamp(2, 30);
+    botDifficulty =
+        ((cfg['botDifficulty'] as num?)?.toInt() ?? botDifficulty).clamp(0, 2);
     final wl = cfg['weapons'];
     if (wl is List) {
       weaponTable = [
@@ -419,6 +539,8 @@ class Room {
         'skills': allowSkills,
         'bots': fillBots,
         'botTarget': botTarget,
+        'botDifficulty': botDifficulty,
+        'started': started,
         'obstacles': [for (final o in obstacles) o.json],
       };
 
@@ -571,6 +693,12 @@ class Room {
       broadcast(_snapshot());
       return;
     }
+    // WARM-UP: nobody has deployed yet. Hold the world still so a player still
+    // sitting in the lobby can't be gunned down before pressing START MISSION.
+    if (!started) {
+      broadcast(_snapshot());
+      return;
+    }
     _botThink(dt); // bots choose their movement/aim, then share the sim below
 
     // tick down skill timers
@@ -582,14 +710,16 @@ class Room {
     }
     // movement (with obstacle sliding collision; dash gives a speed burst)
     for (final p in players) {
-      if (!p.alive) continue;
+      if (!p.alive || !_inPlay(p)) continue;
       var mx = p.mx, my = p.my;
       final len = sqrt(mx * mx + my * my);
       if (len > 1) {
         mx /= len;
         my /= len;
       }
-      final spd = playerSpeed * (p.dashT > 0 ? 1.8 : 1.0);
+      final spd = playerSpeed *
+          (p.dashT > 0 ? 1.8 : 1.0) *
+          (p.isBot ? p.spdMul : 1.0); // bots never outrun a human
       final nx = (p.x + mx * spd * dt).clamp(20.0, world - 20);
       final ny = (p.y + my * spd * dt).clamp(20.0, world - 20);
       if (!_blocksPlayer(nx, ny)) {
@@ -611,7 +741,7 @@ class Room {
         continue;
       }
       for (final p in players) {
-        if (!p.alive || p.id == b.owner) continue;
+        if (!p.alive || !_inPlay(p) || p.id == b.owner) continue;
         final dx = p.x - b.x, dy = p.y - b.y;
         if (dx * dx + dy * dy < hitRadius * hitRadius) {
           b.dist = b.range + 1; // consume the bullet
@@ -633,7 +763,7 @@ class Room {
     // loot pickups: walk over a crate to swap weapon, or a medkit to heal
     loot.removeWhere((l) {
       for (final p in players) {
-        if (!p.alive) continue;
+        if (!p.alive || !_inPlay(p)) continue;
         final dx = p.x - l.x, dy = p.y - l.y;
         if (dx * dx + dy * dy < 34 * 34) {
           if (l.kind == 'm') {
@@ -660,7 +790,7 @@ class Room {
       if (_blocksBullet(g.x, g.y)) g.fuse = min(g.fuse, 0.02); // bump = detonate
       if (g.fuse <= 0) {
         for (final p in players) {
-          if (!p.alive || p.shieldT > 0) continue;
+          if (!p.alive || !_inPlay(p) || p.shieldT > 0) continue;
           final dx = p.x - g.x, dy = p.y - g.y;
           final d = sqrt(dx * dx + dy * dy);
           if (d < nadeRadius) {
@@ -684,7 +814,7 @@ class Room {
     final t = ((_elapsed - _zoneWait) / _zoneShrink).clamp(0.0, 1.0);
     zr = world * 0.72 - (world * 0.72 - world * 0.14) * t;
     for (final p in players) {
-      if (!p.alive) continue;
+      if (!p.alive || !_inPlay(p)) continue;
       final dx = p.x - zx, dy = p.y - zy;
       if (dx * dx + dy * dy > zr * zr) {
         p.hp -= _zoneDps * dt;
@@ -699,8 +829,10 @@ class Room {
   // Round / match win logic: last one standing wins the round; first to
   // [rounds] round-wins takes the match.
   void _checkRoundEnd() {
-    if (_roundEnding || players.length < 2) return;
-    final aliveList = players.where((p) => p.alive).toList();
+    if (_roundEnding || !started) return;
+    final inPlay = players.where(_inPlay).toList();
+    if (inPlay.length < 2) return; // need at least two combatants
+    final aliveList = inPlay.where((p) => p.alive).toList();
     if (aliveList.length > 1) return;
     _roundEnding = true;
     final winner = aliveList.isNotEmpty ? aliveList.first : null;
@@ -753,6 +885,7 @@ class Room {
               'dsh': p.dashT > 0,
               'cd': p.skillCd.clamp(0, 99).round(),
               'bot': p.isBot,
+              'rdy': p.ready,
               'name': p.name,
             }
         ],
@@ -852,6 +985,20 @@ Future<void> main() async {
                   p.roomRef = room;
                   room._spawn(p); // place inside the (possibly resized) arena
                   room.add(p);
+                }
+                break;
+              case 'ready': // START MISSION — the player joins the fight
+                final room = p.roomRef;
+                if (room != null && !p.ready) {
+                  final first = !room.started;
+                  p.ready = true;
+                  if (first) {
+                    // first deployment: fresh zone, fresh loot, spawn the bots
+                    room._respawnAll();
+                  } else {
+                    room._spawn(p); // drop into the running match
+                  }
+                  room.broadcast(room.cfgMsg);
                 }
                 break;
               case 'input':

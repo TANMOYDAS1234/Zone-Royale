@@ -44,6 +44,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
   int _bo = 1; // best-of: 1 / 3 / 5
   bool _medkit = true, _grenades = true, _skills = true;
   bool _bots = true; // fill empty slots with bots so a match is always playable
+  int _botDiff = 1; // 0 easy · 1 normal · 2 hard (all weaker than a human)
 
   static String _randomCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -94,6 +95,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       // give up their slots the moment real players join
       'bots': true,
       'botTarget': 8,
+      'botDifficulty': 1, // normal — still clearly weaker than a human
       'weapons': [
         for (final id in kWeaponOrder)
           {
@@ -148,6 +150,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       // a real player base; they step aside as friends join
       'bots': _bots,
       'botTarget': mode.players.clamp(2, 12),
+      'botDifficulty': _botDiff,
     };
   }
 
@@ -184,7 +187,10 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
         quick: _wasQuick);
   }
 
-  void _startMission() => setState(() => _deployed = true);
+  void _startMission() {
+    _client?.sendReady(); // server drops us in and starts the match
+    setState(() => _deployed = true);
+  }
 
   void _leave() {
     _client?.close();
@@ -393,42 +399,46 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _fieldLabel('MAP & SECTOR'),
-          _dropField(Icons.map_rounded, '$_mapName [SECTOR_${_mapSel + 1}]',
+          _fieldLabel('Map & Sector'),
+          _dropField(Icons.map_rounded, '$_mapName · Sector ${_mapSel + 1}',
               () => setState(() =>
                   _mapSel = (_mapSel + 1) % (kMapThemes.length + 1))),
           const SizedBox(height: 6),
-          _sectionLine('MATCH_RULES'),
-          _fieldLabel('WEAPON TYPE'),
+          _sectionLine('Match Rules'),
+          _fieldLabel('Weapon Type'),
           _dropField(Icons.gps_fixed, _weaponName, () {
             setState(() => _weaponSel = _weaponSel >= kWeaponOrder.length - 1
                 ? -1
                 : _weaponSel + 1);
           }),
           const SizedBox(height: 14),
-          _fieldLabel('ROUNDS'),
+          _fieldLabel('Rounds'),
           _pillGroup(const ['BO1', 'BO3', 'BO5'], const [1, 3, 5], _bo,
               (v) => setState(() => _bo = v)),
           const SizedBox(height: 14),
-          _fieldLabel('PLAYER LIMIT'),
+          _fieldLabel('Player Limit'),
           _pillGroup([
             for (final m in kMatchModes) '${m.players}'
           ], [
             for (var i = 0; i < kMatchModes.length; i++) i
           ], _sizeSel, (v) => setState(() => _sizeSel = v)),
+          const SizedBox(height: 14),
+          _fieldLabel('Bot Difficulty'),
+          _pillGroup(const ['Easy', 'Normal', 'Hard'], const [0, 1, 2], _botDiff,
+              (v) => setState(() => _botDiff = v)),
           const SizedBox(height: 6),
-          _sectionLine('EQUIPMENT_RESTRICTIONS'),
+          _sectionLine('Equipment Restrictions'),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _toggleChip('MEDKITS', _medkit,
+              _toggleChip('Medkits', _medkit,
                   () => setState(() => _medkit = !_medkit)),
-              _toggleChip('GRENADES', _grenades,
+              _toggleChip('Grenades', _grenades,
                   () => setState(() => _grenades = !_grenades)),
-              _toggleChip('HERO_SKILLS', _skills,
+              _toggleChip('Hero Skills', _skills,
                   () => setState(() => _skills = !_skills)),
-              _toggleChip('FILL_WITH_BOTS', _bots,
+              _toggleChip('Fill With Bots', _bots,
                   () => setState(() => _bots = !_bots)),
             ],
           ),
@@ -467,7 +477,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                     const SizedBox(height: 18),
                     Row(
                       children: [
-                        Text('CONNECTED_PLAYERS',
+                        Text('Connected Players',
                             style: TextStyle(
                                 fontFamily: _mono,
                                 color: Colors.white.withValues(alpha: 0.6),
@@ -530,6 +540,21 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     );
   }
 
+  static const _diffNames = ['Easy', 'Normal', 'Hard'];
+
+  String _botsSummary(NetClient c) => c.fillBots
+      ? '${_diffNames[c.botDifficulty.clamp(0, 2)]} × ${c.botTarget}'
+      : 'Off';
+
+  String _equipSummary(NetClient c) {
+    final on = [
+      if (c.allowMedkits) 'Medkits',
+      if (c.allowGrenades) 'Grenades',
+      if (c.allowSkills) 'Skills',
+    ];
+    return on.isEmpty ? 'None' : on.join(', ');
+  }
+
   Widget _summaryCard(NetClient c) {
     Widget row(String k, String v) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
@@ -560,10 +585,12 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
       ),
       child: Column(
         children: [
-          row('MAP', c.map),
-          row('WEAPON', c.weapon),
-          row('ROUNDS', 'BEST OF ${c.rounds * 2 - 1}'),
-          row('PLAYER LIMIT', '${c.maxPlayers}'),
+          row('Map', c.map),
+          row('Weapon', c.weapon),
+          row('Rounds', 'Best of ${c.rounds * 2 - 1}'),
+          row('Player Limit', '${c.maxPlayers}'),
+          row('Bots', _botsSummary(c)),
+          row('Equipment', _equipSummary(c)),
         ],
       ),
     );
@@ -605,12 +632,19 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                         fontSize: 12,
                         fontWeight: FontWeight.w800)),
                 const SizedBox(height: 2),
-                Text(p.bot ? 'AI OPPONENT' : 'READY   ·   WINS ${p.wins}',
+                Text(
+                    p.bot
+                        ? 'AI Opponent'
+                        : (p.ready
+                            ? 'Deployed   ·   Wins ${p.wins}'
+                            : 'In lobby'),
                     style: TextStyle(
                         fontFamily: _mono,
                         color: p.bot
                             ? Colors.white38
-                            : const Color(0xFF57E389).withValues(alpha: 0.9),
+                            : (p.ready
+                                ? const Color(0xFF57E389).withValues(alpha: 0.9)
+                                : Colors.white38),
                         fontSize: 11)),
               ],
             ),
@@ -756,7 +790,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _fieldLabel('ROOM CODE  (share to squad up)'),
+        _fieldLabel('Room Code  ·  share to squad up'),
         Row(
           children: [
             Expanded(
@@ -825,7 +859,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
               Icon(_advanced ? Icons.expand_less : Icons.expand_more,
                   size: 18, color: Colors.white38),
               const SizedBox(width: 4),
-              Text('ADVANCED · SERVER',
+              Text('Advanced · Server',
                   style: TextStyle(
                       fontFamily: _mono,
                       color: Colors.white.withValues(alpha: 0.4),
@@ -1134,12 +1168,21 @@ class _ArenaViewState extends State<_ArenaView>
   NetPlayer? _camTarget(NetClient c) {
     final me = c.me;
     if (me != null && me.alive) return me;
-    final alive = c.players.where((p) => p.alive).toList();
+    final alive = c.players.where((p) => p.alive && p.ready).toList();
     if (alive.isEmpty) return me;
     return alive[_specIdx % alive.length];
   }
 
   void _cycleSpectate() => setState(() => _specIdx++);
+
+  /// Applies a control's own size + opacity (set in the Controls editor).
+  Widget _sized(String key, Widget child) {
+    final p = Profile.instance;
+    return Opacity(
+      opacity: p.hudOpacityOf(key),
+      child: Transform.scale(scale: p.hudScaleOf(key), child: child),
+    );
+  }
 
   void _aimStick(Offset dir) {
     if (dir.distance > 0.2) {
@@ -1478,48 +1521,56 @@ class _ArenaViewState extends State<_ArenaView>
               ),
             ),
           ),
-        // controls (respect the player's stick size / opacity settings)
+        // controls — each honours its own size/opacity from the Controls editor
         Positioned(
           left: 22,
           bottom: 28,
-          child: Joystick(
-            onChange: (d) => _move = d,
-            onRelease: () => _move = Offset.zero,
-            accent: kSafeEdge,
-            size: 132 * Profile.instance.stickScale,
-            opacity: Profile.instance.stickOpacity,
+          child: _sized(
+            'move',
+            Joystick(
+              onChange: (d) => _move = d,
+              onRelease: () => _move = Offset.zero,
+              accent: kSafeEdge,
+            ),
           ),
         ),
         Positioned(
           right: 22,
           bottom: 28,
-          child: Joystick(
-            onChange: _aimStick,
-            onRelease: () => _fire = false,
-            accent: kAccent2,
-            size: 132 * Profile.instance.stickScale,
-            opacity: Profile.instance.stickOpacity,
+          child: _sized(
+            'aim',
+            Joystick(
+              onChange: _aimStick,
+              onRelease: () => _fire = false,
+              accent: kAccent2,
+            ),
           ),
         ),
         // grenade + skill action buttons (above the aim stick)
         Positioned(
           right: 30,
           bottom: 200,
-          child: _actionButton('💣', '${me?.nades ?? 0}',
-              const Color(0xFF6ABF5A), (me?.nades ?? 0) > 0, () {
-            _nadeQ = true;
-          }),
+          child: _sized(
+            'nade',
+            _actionButton('💣', '${me?.nades ?? 0}',
+                const Color(0xFF6ABF5A), (me?.nades ?? 0) > 0, () {
+              _nadeQ = true;
+            }),
+          ),
         ),
         Positioned(
           right: 108,
           bottom: 200,
-          child: _actionButton(
-              '⚡',
-              (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
-              const Color(0xFFB06BFF),
-              (me?.cd ?? 0) <= 0, () {
-            _skillQ = true;
-          }),
+          child: _sized(
+            'skill',
+            _actionButton(
+                '⚡',
+                (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
+                const Color(0xFFB06BFF),
+                (me?.cd ?? 0) <= 0, () {
+              _skillQ = true;
+            }),
+          ),
         ),
       ],
     );
@@ -1702,8 +1753,9 @@ class _ArenaPainter extends CustomPainter {
             ..color = const Color(0xFF8FE07A));
     }
 
-    // players
+    // players (people still sitting in the lobby aren't in the world yet)
     for (final p in c.players) {
+      if (!p.ready) continue;
       final mine = p.id == c.myId;
       final outfit = mine
           ? Profile.instance.outfitColor
@@ -1770,7 +1822,7 @@ class _ArenaPainter extends CustomPainter {
 
     // screen-space overlays: names + hp bars
     for (final p in c.players) {
-      if (!p.alive) continue;
+      if (!p.alive || !p.ready) continue;
       final wp = _posOf(p);
       final sx = (wp.dx - camX) * scale + size.width / 2;
       final sy = (wp.dy - camY) * scale + size.height / 2;

@@ -132,12 +132,27 @@ class HudLayer extends StatelessWidget {
         builder: (_, _) => build(),
       );
 
-  // Places [child] centred on its stored [key] fraction of the screen.
+  // Places [child] centred on its stored [key] fraction of the screen, scaled
+  // and faded to that control's own settings.
   Widget _place(Size s, String key, Widget child, double w, double h) {
-    final f = Profile.instance.hudPosOf(key);
-    final left = (f[0] * s.width - w / 2).clamp(0.0, (s.width - w).clamp(0.0, s.width));
-    final top = (f[1] * s.height - h / 2).clamp(0.0, (s.height - h).clamp(0.0, s.height));
-    return Positioned(left: left, top: top, child: child);
+    final p = Profile.instance;
+    final sc = p.hudScaleOf(key);
+    final op = p.hudOpacityOf(key);
+    final ww = w * sc, hh = h * sc;
+    final f = p.hudPosOf(key);
+    final left =
+        (f[0] * s.width - ww / 2).clamp(0.0, (s.width - ww).clamp(0.0, s.width));
+    final top =
+        (f[1] * s.height - hh / 2).clamp(0.0, (s.height - hh).clamp(0.0, s.height));
+    return Positioned(
+      left: left,
+      top: top,
+      child: Opacity(
+        opacity: op,
+        // Transform scales hit-testing too, so the touch target grows with it
+        child: Transform.scale(scale: sc, child: child),
+      ),
+    );
   }
 
   Widget _skillButton() {
@@ -438,12 +453,13 @@ class HudLayer extends StatelessWidget {
 
   List<Widget> _sticks(Size s) {
     final p = Profile.instance;
-    final size = 132.0 * p.stickScale;
+    // base size — _place() applies each control's own scale + opacity
+    const size = 132.0;
     final move = _stickWidget(
       label: 'MOVE',
       accent: kSafeEdge,
       size: size,
-      opacity: p.stickOpacity,
+      opacity: 1.0,
       onChange: (v) {
         game.enableTouch(true);
         game.setMove(v.dx, v.dy);
@@ -454,7 +470,7 @@ class HudLayer extends StatelessWidget {
       label: 'AIM · FIRE',
       accent: kAccent2,
       size: size,
-      opacity: p.stickOpacity,
+      opacity: 1.0,
       onChange: (v) {
         game.enableTouch(true);
         game.setAimStick(v.dx, v.dy);
@@ -464,7 +480,7 @@ class HudLayer extends StatelessWidget {
     // leftHanded swaps which stored slot each stick occupies.
     final moveKey = p.leftHanded ? 'aim' : 'move';
     final aimKey = p.leftHanded ? 'move' : 'aim';
-    final h = size + 26; // joystick + label
+    const h = size + 26; // joystick + label
     return [
       _place(s, moveKey, move, size, h),
       _place(s, aimKey, aim, size, h),
@@ -547,6 +563,10 @@ class _ControlsEditorState extends State<ControlsEditor> {
     'hp': 'HP BAR',
   };
 
+  late Map<String, double> _scale;
+  late Map<String, double> _opacity;
+  String _sel = 'move'; // control currently being tuned
+
   @override
   void initState() {
     super.initState();
@@ -554,10 +574,13 @@ class _ControlsEditorState extends State<ControlsEditor> {
   }
 
   void _load() {
+    final p = Profile.instance;
     _pos = {
       for (final k in Profile.kDefaultHud.keys)
-        k: List<double>.from(Profile.instance.hudPosOf(k)),
+        k: List<double>.from(p.hudPosOf(k)),
     };
+    _scale = {for (final k in Profile.kDefaultHud.keys) k: p.hudScaleOf(k)};
+    _opacity = {for (final k in Profile.kDefaultHud.keys) k: p.hudOpacityOf(k)};
   }
 
   void _reset() => setState(() {
@@ -565,12 +588,17 @@ class _ControlsEditorState extends State<ControlsEditor> {
           for (final e in Profile.kDefaultHud.entries)
             e.key: List<double>.from(e.value),
         };
+        _scale = {for (final k in Profile.kDefaultHud.keys) k: 1.0};
+        _opacity = {for (final k in Profile.kDefaultHud.keys) k: 1.0};
       });
 
   Future<void> _save() async {
-    Profile.instance.resetHud();
-    _pos.forEach((k, v) => Profile.instance.setHudPos(k, v[0], v[1]));
-    await Profile.instance.save();
+    final p = Profile.instance;
+    p.resetHud();
+    _pos.forEach((k, v) => p.setHudPos(k, v[0], v[1]));
+    _scale.forEach(p.setHudScale);
+    _opacity.forEach(p.setHudOpacity);
+    await p.save();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -632,26 +660,37 @@ class _ControlsEditorState extends State<ControlsEditor> {
                   ),
                 ),
               ),
-              // save bar
+              // tuning panel + save bar
               Positioned(
                 bottom: 0,
                 left: 0,
                 right: 0,
                 child: SafeArea(
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 22),
-                    child: ElevatedButton(
-                      onPressed: _save,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kSafeEdge,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                      ),
-                      child: const Text('SAVE LAYOUT',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w900)),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _tunePanel(),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _save,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: kSafeEdge,
+                              foregroundColor: Colors.black,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                            ),
+                            child: const Text('SAVE LAYOUT',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.w900)),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -663,45 +702,124 @@ class _ControlsEditorState extends State<ControlsEditor> {
     );
   }
 
-  Widget _token(Size s, String key, double w, double h,
+  Widget _token(Size s, String key, double baseW, double baseH,
       {required Color accent,
       bool ring = false,
       bool box = false,
       String? emoji}) {
     final f = _pos[key]!;
-    final left = f[0] * s.width - w / 2;
-    final top = f[1] * s.height - h / 2;
+    final sc = _scale[key]!;
+    final op = _opacity[key]!;
+    final w = baseW * sc, h = baseH * sc;
+    final selected = _sel == key;
     return Positioned(
-      left: left,
-      top: top,
+      left: f[0] * s.width - w / 2,
+      top: f[1] * s.height - h / 2,
       child: GestureDetector(
+        onTap: () => setState(() => _sel = key),
+        onPanStart: (_) => setState(() => _sel = key),
         onPanUpdate: (d) => setState(() {
           f[0] = (f[0] + d.delta.dx / s.width).clamp(0.05, 0.95);
           f[1] = (f[1] + d.delta.dy / s.height).clamp(0.10, 0.92);
         }),
-        child: Container(
-          width: w,
-          height: h,
-          decoration: BoxDecoration(
-            color: accent.withValues(alpha: 0.16),
-            shape: ring ? BoxShape.circle : BoxShape.rectangle,
-            borderRadius: ring ? null : BorderRadius.circular(14),
-            border: Border.all(color: accent, width: 2),
-          ),
-          child: Center(
-            child: emoji != null
-                ? Text(emoji, style: const TextStyle(fontSize: 22))
-                : Text(
-                    _labels[key]!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: accent,
-                        fontWeight: FontWeight.w900,
-                        fontSize: box ? 13 : 11,
-                        letterSpacing: 0.5),
-                  ),
+        child: Opacity(
+          opacity: op,
+          child: Container(
+            width: w,
+            height: h,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: selected ? 0.30 : 0.16),
+              shape: ring ? BoxShape.circle : BoxShape.rectangle,
+              borderRadius: ring ? null : BorderRadius.circular(14 * sc),
+              border: Border.all(
+                  color: selected ? Colors.white : accent,
+                  width: selected ? 3 : 2),
+            ),
+            child: Center(
+              child: emoji != null
+                  ? Text(emoji, style: TextStyle(fontSize: 22 * sc))
+                  : Text(
+                      _labels[key]!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: accent,
+                          fontWeight: FontWeight.w900,
+                          fontSize: (box ? 13 : 11) * sc,
+                          letterSpacing: 0.5),
+                    ),
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// SIZE + OPACITY sliders for whichever control is currently selected.
+  Widget _tunePanel() {
+    final label = _labels[_sel] ?? _sel;
+    Widget row(String name, double val, double min, double max,
+        ValueChanged<double> onCh) {
+      return Row(
+        children: [
+          SizedBox(
+              width: 62,
+              child: Text(name,
+                  style: const TextStyle(fontSize: 11, color: Colors.white60))),
+          Expanded(
+            child: SliderTheme(
+              data: SliderTheme.of(context)
+                  .copyWith(trackHeight: 3, activeTrackColor: kAccent),
+              child: Slider(
+                  value: val.clamp(min, max),
+                  min: min,
+                  max: max,
+                  activeColor: kAccent,
+                  onChanged: onCh),
+            ),
+          ),
+          SizedBox(
+            width: 44,
+            child: Text('${(val * 100).round()}%',
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    fontSize: 11, color: kAccent, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.tune, size: 15, color: kAccent),
+              const SizedBox(width: 6),
+              Text('TUNING  ·  $label',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1)),
+              const Spacer(),
+              const Text('tap a control to select',
+                  style: TextStyle(color: Colors.white30, fontSize: 10)),
+            ],
+          ),
+          // each control has its own floor (48dp touch target) and ceiling
+          row('SIZE', _scale[_sel]!, Profile.scaleRangeOf(_sel)[0],
+              Profile.scaleRangeOf(_sel)[1],
+              (v) => setState(() => _scale[_sel] = v)),
+          row('OPACITY', _opacity[_sel]!, Profile.kMinOpacity,
+              Profile.kMaxOpacity, (v) => setState(() => _opacity[_sel] = v)),
+        ],
       ),
     );
   }
@@ -2092,27 +2210,14 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
             ),
           ],
         ),
-        _slider('Stick size', p.stickScale, 0.7, 1.6,
-            (v) => setState(() => p.stickScale = v),
-            valueLabel: '${(p.stickScale * 100).round()}%', onEnd: p.save),
-        _slider('Stick opacity', p.stickOpacity, 0.4, 1.6,
-            (v) => setState(() => p.stickOpacity = v),
-            valueLabel: '${(p.stickOpacity * 100).round()}%', onEnd: p.save),
-        const SizedBox(height: 10),
-        // live preview — updates as you drag, so the settings are visible
-        SizedBox(
-          height: 132 * 1.6 + 30,
-          child: Center(
-            child: IgnorePointer(
-              child: Joystick(
-                onChange: (_) {},
-                onRelease: () {},
-                size: 132 * p.stickScale,
-                opacity: p.stickOpacity,
-                accent: kSafeEdge,
-              ),
-            ),
-          ),
+        const SizedBox(height: 6),
+        Text(
+          'Size and opacity are now set per control (move, aim, skill, grenade, '
+          'reload, fire mode, HP bar) in the editor below.',
+          style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.4),
+              fontSize: 11,
+              height: 1.4),
         ),
         const SizedBox(height: 12),
         GestureDetector(
@@ -2134,40 +2239,6 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
                     color: kSafeEdge)),
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _slider(String label, double val, double min, double max,
-      ValueChanged<double> onCh,
-      {String? valueLabel, VoidCallback? onEnd}) {
-    return Row(
-      children: [
-        SizedBox(
-            width: 96,
-            child: Text(label,
-                style: const TextStyle(fontSize: 13, color: Colors.white70))),
-        Expanded(
-          child: Slider(
-            value: val.clamp(min, max),
-            min: min,
-            max: max,
-            activeColor: kAccent,
-            onChanged: onCh,
-            // persist once on release instead of on every drag frame
-            onChangeEnd: onEnd == null ? null : (_) => onEnd(),
-          ),
-        ),
-        if (valueLabel != null)
-          SizedBox(
-            width: 46,
-            child: Text(valueLabel,
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontSize: 12,
-                    color: kAccent,
-                    fontWeight: FontWeight.w800)),
-          ),
       ],
     );
   }
