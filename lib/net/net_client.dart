@@ -31,6 +31,12 @@ class NetBullet {
   const NetBullet(this.x, this.y);
 }
 
+/// A rectangular obstacle (building/cover). x,y is the centre.
+class NetObs {
+  final double x, y, w, h;
+  const NetObs(this.x, this.y, this.w, this.h);
+}
+
 /// Thin client for the Zone Royale authoritative server. Connects over a plain
 /// dart:io WebSocket (works on Android/iOS/desktop — no extra dependency),
 /// sends local input, and exposes the latest server snapshot. `rev` bumps on
@@ -47,6 +53,10 @@ class NetClient {
 
   List<NetPlayer> players = const [];
   List<NetBullet> bullets = const [];
+  List<NetObs> obstacles = const [];
+
+  // shrinking gas zone
+  double zoneX = 1600, zoneY = 1600, zoneR = 3000;
 
   // room match settings (from the host's config)
   String map = 'RANDOM';
@@ -149,6 +159,18 @@ class NetClient {
           round = (m['round'] as num?)?.toInt() ?? round;
           maxPlayers = (m['maxPlayers'] as num?)?.toInt() ?? maxPlayers;
           hostId = (m['host'] as num?)?.toInt() ?? hostId;
+          final obs = m['obstacles'];
+          if (obs is List) {
+            obstacles = [
+              for (final o in obs)
+                NetObs(
+                  (o['x'] as num).toDouble(),
+                  (o['y'] as num).toDouble(),
+                  (o['w'] as num).toDouble(),
+                  (o['h'] as num).toDouble(),
+                )
+            ];
+          }
           _bump();
           break;
         case 'round':
@@ -171,6 +193,12 @@ class NetClient {
             for (final b in (m['bullets'] as List))
               NetBullet((b['x'] as num).toDouble(), (b['y'] as num).toDouble())
           ];
+          final z = m['zone'];
+          if (z is Map) {
+            zoneX = (z['x'] as num).toDouble();
+            zoneY = (z['y'] as num).toDouble();
+            zoneR = (z['r'] as num).toDouble();
+          }
           // a fresh match cleared the winner banner
           if (matchWinner != null && players.any((p) => p.wins == 0) &&
               players.every((p) => p.alive)) {

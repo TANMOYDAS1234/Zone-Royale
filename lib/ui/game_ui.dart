@@ -1047,7 +1047,7 @@ class _StartOverlayState extends State<StartOverlay> {
                         border:
                             Border.all(color: kSafeEdge.withValues(alpha: 0.7)),
                       ),
-                      child: const Text('🌐  MULTIPLAYER  ·  LIVE',
+                      child: const Text('🌐  CUSTOM ROOM  ·  PLAY ONLINE',
                           style: TextStyle(
                               fontWeight: FontWeight.w800,
                               letterSpacing: 1,
@@ -1649,20 +1649,25 @@ class _DropButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 52, vertical: 16),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
               colors: [Color(0xFFFFD36B), kAccent]),
-          borderRadius: BorderRadius.circular(40),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
-            BoxShadow(color: kAccent.withValues(alpha: 0.5), blurRadius: 24)
+            BoxShadow(
+                color: kAccent.withValues(alpha: 0.45),
+                blurRadius: 22,
+                spreadRadius: -2)
           ],
         ),
         child: Text(label,
+            textAlign: TextAlign.center,
             style: const TextStyle(
                 color: Color(0xFF10131A),
                 fontWeight: FontWeight.w900,
-                fontSize: 19,
+                fontSize: 18,
                 letterSpacing: 1)),
       ),
     );

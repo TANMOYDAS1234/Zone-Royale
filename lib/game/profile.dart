@@ -17,7 +17,7 @@ class Profile {
   int accessory = 0; // index into kAccessoryNames
 
   // ---- loadout / combat ----
-  WeaponId startWeapon = WeaponId.pistol;
+  WeaponId startWeapon = WeaponId.smg; // SMG by default
   bool fireAuto = true; // prefer auto fire when the weapon supports it
   int matchMode = 0; // index into kMatchModes
   int hero = 0; // index into kHeroes

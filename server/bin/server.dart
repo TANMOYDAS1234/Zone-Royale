@@ -67,6 +67,14 @@ class Bullet {
   Bullet(this.x, this.y, this.vx, this.vy, this.owner);
 }
 
+// A rectangular obstacle (building/cover). x,y is the centre.
+class Obs {
+  final double x, y, hw, hh;
+  Obs(this.x, this.y, this.hw, this.hh);
+  Map<String, int> get json =>
+      {'x': x.round(), 'y': y.round(), 'w': (hw * 2).round(), 'h': (hh * 2).round()};
+}
+
 class Room {
   final String code;
   final List<Player> players = [];
@@ -87,6 +95,53 @@ class Room {
   int roundNo = 1;
   bool _roundEnding = false;
   bool matchOver = false;
+
+  // ---- map cover + shrinking gas zone (parity with a normal match) ----
+  final List<Obs> obstacles = [];
+  double zx = worldSize / 2, zy = worldSize / 2;
+  double zr = worldSize * 0.72; // current safe radius
+  double _elapsed = 0; // seconds into the round
+  static const double _zoneWait = 14; // grace before the zone shrinks
+  static const double _zoneShrink = 95; // seconds to reach the final ring
+  static const double _zoneDps = 7; // damage/second outside the safe circle
+
+  void _genMap() {
+    obstacles.clear();
+    final n = (world * world / 340000).round().clamp(6, 40);
+    var tries = 0;
+    while (obstacles.length < n && tries < n * 6) {
+      tries++;
+      final hw = 30 + _rng.nextDouble() * 55;
+      final hh = 30 + _rng.nextDouble() * 55;
+      final x = 60 + _rng.nextDouble() * (world - 120);
+      final y = 60 + _rng.nextDouble() * (world - 120);
+      // keep the exact centre a bit clearer
+      if ((x - world / 2).abs() < 120 && (y - world / 2).abs() < 120) continue;
+      obstacles.add(Obs(x, y, hw, hh));
+    }
+    _resetZone();
+  }
+
+  void _resetZone() {
+    zx = world / 2;
+    zy = world / 2;
+    zr = world * 0.72;
+    _elapsed = 0;
+  }
+
+  bool _blocksPlayer(double x, double y) {
+    for (final o in obstacles) {
+      if ((x - o.x).abs() < o.hw + 20 && (y - o.y).abs() < o.hh + 20) return true;
+    }
+    return false;
+  }
+
+  bool _blocksBullet(double x, double y) {
+    for (final o in obstacles) {
+      if ((x - o.x).abs() < o.hw && (y - o.y).abs() < o.hh) return true;
+    }
+    return false;
+  }
 
   // First player to create the room is the host and sets the rules.
   void configure(Map cfg) {
@@ -112,12 +167,14 @@ class Room {
         'round': roundNo,
         'maxPlayers': maxPlayers,
         'host': players.isNotEmpty ? players.first.id : 0,
+        'obstacles': [for (final o in obstacles) o.json],
       };
 
   void add(Player p) {
     players.add(p);
+    if (obstacles.isEmpty) _genMap(); // build the arena once, on first join
     _send(p, {'type': 'welcome', 'id': p.id, 'world': world});
-    broadcast(cfgMsg); // everyone learns the room rules
+    broadcast(cfgMsg); // everyone learns the room rules + map
     _loop ??= Timer.periodic(
         Duration(milliseconds: 1000 ~/ tickHz), (_) => _tick());
     print('+ player ${p.id} -> room "$code" '
@@ -158,13 +215,18 @@ class Room {
   }
 
   void _spawn(Player p) {
-    p.x = 40 + _rng.nextDouble() * (world - 80);
-    p.y = 40 + _rng.nextDouble() * (world - 80);
+    // spawn on open ground (not inside a building)
+    for (var i = 0; i < 30; i++) {
+      p.x = 40 + _rng.nextDouble() * (world - 80);
+      p.y = 40 + _rng.nextDouble() * (world - 80);
+      if (!_blocksPlayer(p.x, p.y)) break;
+    }
     p.hp = 100;
     p.alive = true;
   }
 
   void _respawnAll() {
+    _resetZone();
     for (final p in players) {
       _spawn(p);
     }
@@ -177,7 +239,7 @@ class Room {
       broadcast(_snapshot());
       return;
     }
-    // movement
+    // movement (with obstacle sliding collision)
     for (final p in players) {
       if (!p.alive) continue;
       var mx = p.mx, my = p.my;
@@ -186,14 +248,26 @@ class Room {
         mx /= len;
         my /= len;
       }
-      p.x = (p.x + mx * playerSpeed * dt).clamp(20.0, world - 20);
-      p.y = (p.y + my * playerSpeed * dt).clamp(20.0, world - 20);
+      final nx = (p.x + mx * playerSpeed * dt).clamp(20.0, world - 20);
+      final ny = (p.y + my * playerSpeed * dt).clamp(20.0, world - 20);
+      if (!_blocksPlayer(nx, ny)) {
+        p.x = nx;
+        p.y = ny;
+      } else if (!_blocksPlayer(nx, p.y)) {
+        p.x = nx;
+      } else if (!_blocksPlayer(p.x, ny)) {
+        p.y = ny;
+      }
     }
-    // bullets + hit detection
+    // bullets + hit detection (bullets stop at cover)
     for (final b in bullets) {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       b.dist += bSpeed * dt;
+      if (_blocksBullet(b.x, b.y)) {
+        b.dist = bRange + 1;
+        continue;
+      }
       for (final p in players) {
         if (!p.alive || p.id == b.owner) continue;
         final dx = p.x - b.x, dy = p.y - b.y;
@@ -212,6 +286,20 @@ class Room {
     }
     bullets.removeWhere((b) =>
         b.dist > bRange || b.x < 0 || b.x > world || b.y < 0 || b.y > world);
+
+    // shrinking gas zone: after a grace period the safe circle closes; anyone
+    // caught outside it takes damage until they get back in.
+    _elapsed += dt;
+    final t = ((_elapsed - _zoneWait) / _zoneShrink).clamp(0.0, 1.0);
+    zr = world * 0.72 - (world * 0.72 - world * 0.14) * t;
+    for (final p in players) {
+      if (!p.alive) continue;
+      final dx = p.x - zx, dy = p.y - zy;
+      if (dx * dx + dy * dy > zr * zr) {
+        p.hp -= _zoneDps * dt;
+        if (p.hp <= 0) p.alive = false;
+      }
+    }
 
     _checkRoundEnd();
     broadcast(_snapshot());
@@ -274,6 +362,7 @@ class Room {
         'bullets': [
           for (final b in bullets) {'x': b.x.round(), 'y': b.y.round()}
         ],
+        'zone': {'x': zx.round(), 'y': zy.round(), 'r': zr.round()},
       });
 
   void broadcast(Object msg) {

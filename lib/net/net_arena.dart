@@ -1123,6 +1123,26 @@ class _ArenaPainter extends CustomPainter {
       canvas.drawLine(Offset(0, g), Offset(c.world, g), grid);
     }
 
+    // obstacles / cover (buildings)
+    final obFill = Paint()..color = const Color(0xFF2B303B);
+    final obTop = Paint()..color = const Color(0xFF3A414F);
+    final obEdge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..color = Colors.black.withValues(alpha: 0.5);
+    for (final o in c.obstacles) {
+      final rect = Rect.fromCenter(
+          center: Offset(o.x, o.y), width: o.w, height: o.h);
+      final rr = RRect.fromRectAndRadius(rect, const Radius.circular(5));
+      canvas.drawRRect(rr.shift(const Offset(0, 6)),
+          Paint()..color = Colors.black.withValues(alpha: 0.35)); // drop shadow
+      canvas.drawRRect(rr, obFill);
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(rect.deflate(o.w * 0.16), const Radius.circular(4)),
+          obTop);
+      canvas.drawRRect(rr, obEdge);
+    }
+
     // bullets
     final bp = Paint()..color = kAccent;
     final bg = Paint()..color = kAccent.withValues(alpha: 0.35);
@@ -1166,6 +1186,21 @@ class _ArenaPainter extends CustomPainter {
               ..color = kSafeEdge.withValues(alpha: 0.7));
       }
     }
+
+    // shrinking gas zone: gas fills everything outside the safe circle
+    final gas = Path()
+      ..addRect(Rect.fromLTWH(-2000, -2000, c.world + 4000, c.world + 4000))
+      ..addOval(Rect.fromCircle(
+          center: Offset(c.zoneX, c.zoneY), radius: c.zoneR))
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(gas, Paint()..color = kGasFill);
+    canvas.drawCircle(
+        Offset(c.zoneX, c.zoneY),
+        c.zoneR,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 6
+          ..color = kGasEdge);
     canvas.restore();
 
     // screen-space overlays: names + hp bars
