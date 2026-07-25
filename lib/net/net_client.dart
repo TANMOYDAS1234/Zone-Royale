@@ -109,7 +109,11 @@ class NetWall {
 class NetShot {
   final double x, y, aim;
   final int wi;
-  const NetShot(this.x, this.y, this.aim, this.wi);
+  /// Who fired it. The renderer starts the tracer at THAT operator's muzzle as
+  /// currently drawn — otherwise a round appears to leave the shooter's chest,
+  /// because the snapshot position lags what you see on screen.
+  final int shooter;
+  const NetShot(this.x, this.y, this.aim, this.wi, this.shooter);
 }
 
 /// Thin client for the Zone Royale authoritative server. Connects over a plain
@@ -473,6 +477,7 @@ class NetClient {
                 (s[1] as num).toDouble(),
                 (s[2] as num).toDouble() / 100.0,
                 (s[3] as num).toInt(),
+                s.length > 4 ? (s[4] as num).toInt() : -1,
               ));
             }
             if (shotQueue.length > 120) {

@@ -25,6 +25,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   late int _mode = Profile.instance.matchMode.clamp(0, kMatchModes.length - 1);
 
+  /// Rebuild key for the operator stage — changes whenever the loadout does.
+  String _look() {
+    final p = Profile.instance;
+    return '${p.outfit}-${p.skin}-${p.accessory}-${p.hero}-${p.startWeapon.index}';
+  }
+
   void _drop() {
     Profile.instance.matchMode = _mode;
     Profile.instance.save();
@@ -54,7 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Expanded(flex: 5, child: ZrOperatorStage(height: 999)),
+                        Expanded(flex: 5, child: ZrOperatorStage(height: 999, key: ValueKey(_look()))),
                         const SizedBox(width: 16),
                         Expanded(flex: 6, child: _console()),
                       ],
@@ -62,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   : SingleChildScrollView(
                       child: Column(
                         children: [
-                          const ZrOperatorStage(height: 240),
+                          ZrOperatorStage(height: 240, key: ValueKey(_look())),
                           const SizedBox(height: 14),
                           _console(scroll: false),
                         ],

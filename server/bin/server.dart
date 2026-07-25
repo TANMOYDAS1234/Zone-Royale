@@ -289,7 +289,7 @@ class Room {
   int botDifficulty = 1; // 0 easy · 1 normal · 2 hard — all weaker than a human
 
   // ---- per-tick event queues (flushed with the snapshot) ----
-  final List<List<int>> _shots = []; // [x, y, aim*100, wi]
+  final List<List<int>> _shots = []; // [x, y, aim*100, wi, shooterId]
   final List<List<int>> _booms = []; // [x, y]
   bool _rosterDirty = true;
 
@@ -1048,7 +1048,8 @@ class Room {
       }
       // one event per trigger pull — clients draw the muzzle flash and fly
       // their own tracers with the same weapon stats
-      _shots.add([p.x.round(), p.y.round(), (p.aim * 100).round(), p.wi]);
+      _shots.add(
+          [p.x.round(), p.y.round(), (p.aim * 100).round(), p.wi, p.id]);
       if (p.ammo[p.slot] <= 0) _startReload(p);
     }
   }

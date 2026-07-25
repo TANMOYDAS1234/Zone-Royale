@@ -152,21 +152,18 @@ class ZrCanvas extends StatelessWidget {
       if (!box.hasBoundedHeight || box.maxHeight <= 0) return child;
       final scale =
           (box.maxHeight / designHeight).clamp(minScale, maxScale).toDouble();
+      // FittedBox, not OverflowBox + Transform: it scales AND transforms hit
+      // testing correctly. The hand-rolled version painted in the right place
+      // but sent taps to the wrong widget — a tap on the bottom nav was
+      // landing on the tabs at the top of the screen.
       return ClipRect(
-        child: OverflowBox(
+        child: FittedBox(
+          fit: BoxFit.fill,
           alignment: Alignment.topLeft,
-          minWidth: 0,
-          minHeight: 0,
-          maxWidth: box.maxWidth / scale,
-          maxHeight: box.maxHeight / scale,
-          child: Transform.scale(
-            scale: scale,
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: box.maxWidth / scale,
-              height: box.maxHeight / scale,
-              child: child,
-            ),
+          child: SizedBox(
+            width: box.maxWidth / scale,
+            height: box.maxHeight / scale,
+            child: child,
           ),
         ),
       );

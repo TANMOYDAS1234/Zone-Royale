@@ -11,6 +11,9 @@ import 'game/sfx.dart';
 import 'ui/brand.dart';
 import 'ui/game_ui.dart';
 import 'ui/home_screen.dart';
+import 'ui/missions_screen.dart';
+import 'ui/profile_screen.dart';
+import 'ui/shop_screen.dart';
 
 /// Refresh rate we aim for. 90 Hz is the sweet spot: clearly smoother than 60
 /// without the battery/thermal cost of 120 on a mid-range phone. Set to 60 for
@@ -214,11 +217,11 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                       case Screen.end:
                         return EndOverlay(game: game);
                       case Screen.profile:
-                        return ProfileOverlay(game: game);
+                        return ProfileScreen(game: game);
                       case Screen.missions:
-                        return MissionsOverlay(game: game);
+                        return MissionsScreen(game: game);
                       case Screen.shop:
-                        return ShopOverlay(game: game);
+                        return ShopScreen(game: game);
                       default:
                         return HudLayer(game: game);
                     }

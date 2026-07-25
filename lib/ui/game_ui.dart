@@ -888,6 +888,11 @@ class _ControlsEditorState extends State<ControlsEditor> {
   late Map<String, double> _opacity;
   String _sel = 'move'; // control currently being tuned
   bool? _loadedLandscape; // which orientation's layout is loaded
+  /// The tuning panel and the save bar cover the top and bottom of the screen
+  /// — exactly where controls live. They fade out while you drag, and can be
+  /// hidden entirely, so every inch of the layout is reachable.
+  bool _dragging = false;
+  bool _panels = true;
 
   @override
   void initState() {
@@ -968,7 +973,12 @@ class _ControlsEditorState extends State<ControlsEditor> {
                 top: 0,
                 left: 0,
                 right: 0,
-                child: SafeArea(
+                child: IgnorePointer(
+                  ignoring: _dragging || !_panels,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 140),
+                    opacity: !_panels ? 0.0 : (_dragging ? 0.18 : 1.0),
+                    child: SafeArea(
                   bottom: false,
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
@@ -1011,6 +1021,35 @@ class _ControlsEditorState extends State<ControlsEditor> {
                               label: const Text('RESET',
                                   style: TextStyle(color: Colors.white70)),
                             ),
+                            // hide the panels to reach controls underneath
+                            IconButton(
+                              onPressed: () =>
+                                  setState(() => _panels = !_panels),
+                              tooltip: 'Show / hide panels',
+                              icon: Icon(
+                                  _panels
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
+                                  size: 20,
+                                  color: _panels ? Colors.white70 : kAccent),
+                            ),
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: _save,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 9),
+                                decoration: BoxDecoration(
+                                  color: kSafeEdge,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Text('SAVE',
+                                    style: TextStyle(
+                                        color: Color(0xFF10131A),
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 1)),
+                              ),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 6),
@@ -1019,32 +1058,6 @@ class _ControlsEditorState extends State<ControlsEditor> {
                     ),
                   ),
                 ),
-              ),
-              // save bar only — keeps the bottom clear for the controls
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  top: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _save,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kSafeEdge,
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
-                        ),
-                        child: const Text('SAVE LAYOUT',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w900)),
-                      ),
-                    ),
                   ),
                 ),
               ),
@@ -1070,7 +1083,12 @@ class _ControlsEditorState extends State<ControlsEditor> {
       top: f[1] * s.height - h / 2,
       child: GestureDetector(
         onTap: () => setState(() => _sel = key),
-        onPanStart: (_) => setState(() => _sel = key),
+        onPanStart: (_) => setState(() {
+          _sel = key;
+          _dragging = true;
+        }),
+        onPanEnd: (_) => setState(() => _dragging = false),
+        onPanCancel: () => setState(() => _dragging = false),
         onPanUpdate: (d) => setState(() {
           f[0] = (f[0] + d.delta.dx / s.width).clamp(0.05, 0.95);
           f[1] = (f[1] + d.delta.dy / s.height).clamp(0.10, 0.92);

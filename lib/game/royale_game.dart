@@ -252,6 +252,7 @@ class RoyaleGame extends FlameGame {
     _shakeX = 0;
     _shakeY = 0;
     pickupPrompt = null;
+    _pickupFx.clear();
     airdrop = null;
     airdropT = 0;
     _dropsMade = 0;
@@ -546,6 +547,7 @@ class RoyaleGame extends FlameGame {
     _updateWalls(dt);
     _updateAirdrop(dt);
     _updateStreak(dt);
+    _updatePickupFx(dt);
     _pickups();
     for (final m in _hitMarks) {
       m.life -= dt;
@@ -1309,6 +1311,36 @@ class RoyaleGame extends FlameGame {
   // =====================================================================
   //  LOOT
   // =====================================================================
+  /// Short-lived pickup flourishes: the item lifts off the ground, spins and
+  /// bursts into sparks with a label. Collecting something should FEEL like
+  /// collecting something.
+  final List<_PickupFx> _pickupFx = [];
+
+  void _pickupPop(Vector2 at, Color color, String label, {bool big = false}) {
+    _pickupFx.add(_PickupFx(at.clone(), color, label, big ? 0.9 : 0.65, big));
+    if (_pickupFx.length > 12) _pickupFx.removeAt(0);
+    final n = _fxCount(big ? 18 : 10);
+    for (var i = 0; i < n; i++) {
+      final a = randRange(0, kTau);
+      particles.add(Particle(
+          at + fromAngle(a, randRange(0, 10)),
+          fromAngle(a, randRange(50, big ? 220 : 140)),
+          randRange(0.25, 0.55),
+          randRange(1.8, big ? 4.5 : 3.2),
+          color,
+          glow: true));
+    }
+    // a ring that snaps outward
+    _shocks.add(_Shock(at.clone(), big ? 90 : 58, 0.32));
+  }
+
+  void _updatePickupFx(double dt) {
+    for (final f in _pickupFx) {
+      f.t += dt;
+    }
+    _pickupFx.removeWhere((f) => f.t >= f.life);
+  }
+
   /// The weapon crate the player is standing on that needs a deliberate tap.
   /// Set when both slots are full — the HUD turns this into a PICK UP button.
   /// While it's null, nothing on the ground can change what you're holding.
@@ -1329,6 +1361,7 @@ class RoyaleGame extends FlameGame {
           if (c.hp >= kMaxHp) continue;
           c.hp = math.min(kMaxHp, c.hp + l.heal);
           l.taken = true;
+          _pickupPop(l.pos, const Color(0xFF57E389), '+${l.heal.toInt()} HP');
           if (c == player) {
             Sfx.pickup();
             _setToast('+${l.heal.toInt()} HP');
@@ -1337,6 +1370,7 @@ class RoyaleGame extends FlameGame {
           if (c.grenades >= kGrenadeMax) continue;
           c.grenades = math.min(kGrenadeMax, c.grenades + 2);
           l.taken = true;
+          _pickupPop(l.pos, const Color(0xFF7FCF6A), '+2 NADES');
           if (c == player) {
             Sfx.pickup();
             _setToast('+2 grenades');
@@ -1345,6 +1379,7 @@ class RoyaleGame extends FlameGame {
           if (c.vest >= kVestDurability * 0.9) continue; // already geared
           c.vest = kVestDurability;
           l.taken = true;
+          _pickupPop(l.pos, const Color(0xFF7FC4FF), 'VEST');
           if (c == player) {
             Sfx.pickup();
             _setToast('🦺 Vest equipped  ·  -30% damage');
@@ -1353,6 +1388,7 @@ class RoyaleGame extends FlameGame {
           if (c.helmet >= kHelmetDurability * 0.9) continue;
           c.helmet = kHelmetDurability;
           l.taken = true;
+          _pickupPop(l.pos, const Color(0xFFC9D6A8), 'HELMET');
           if (c == player) {
             Sfx.pickup();
             _setToast('⛑ Helmet equipped  ·  -22% damage');
@@ -1361,6 +1397,7 @@ class RoyaleGame extends FlameGame {
           if (c.walls >= kShieldWallMax) continue;
           c.walls = math.min(kShieldWallMax, c.walls + 1);
           l.taken = true;
+          _pickupPop(l.pos, const Color(0xFF7FE8FF), '+1 WALL');
           if (c == player) {
             Sfx.pickup();
             _setToast('+1 shield wall');
@@ -1371,6 +1408,9 @@ class RoyaleGame extends FlameGame {
           if (c.addWeapon(w)) {
             // free slot — always safe to take, nothing leaves your hands
             l.taken = true;
+            _pickupPop(l.pos, kWeapons[w]!.color,
+                kWeapons[w]!.name.toUpperCase(),
+                big: l.airdrop);
             if (c.isBot) {
               c.equipBest();
             } else {
@@ -1441,6 +1481,8 @@ class RoyaleGame extends FlameGame {
     final old = player.replaceWeapon(w);
     l.taken = true;
     pickupPrompt = null;
+    _pickupPop(l.pos, kWeapons[w]!.color, kWeapons[w]!.name.toUpperCase(),
+        big: l.airdrop);
     if (old != null) {
       loot.add(Loot(LootKind.weapon,
           player.pos - fromAngle(player.aim) * (player.radius + 26),
@@ -1840,6 +1882,7 @@ class RoyaleGame extends FlameGame {
     _drawGrenades(canvas);
     _drawCharacters(canvas);
     _drawParticles(canvas);
+    _drawPickupFx(canvas);
     _drawObstacles(canvas, bushes: true);
     _drawGas(canvas);
     _drawDmgTexts(canvas);
@@ -2328,6 +2371,53 @@ class RoyaleGame extends FlameGame {
     }
   }
 
+  /// Pickup flourishes, drawn above the world.
+  void _drawPickupFx(Canvas canvas) {
+    for (final f in _pickupFx) {
+      final t = (f.t / f.life).clamp(0.0, 1.0);
+      final lift = _easeOut(t) * (f.big ? 34 : 24);
+      final a = (1 - t);
+      final o = Offset(f.pos.x, f.pos.y - lift);
+      // expanding halo
+      canvas.drawCircle(o, (f.big ? 26 : 18) * (0.4 + t),
+          _stroke..color = f.color.withValues(alpha: 0.5 * a)..strokeWidth = 2);
+      // the item itself, spinning as it rises
+      canvas.save();
+      canvas.translate(o.dx, o.dy);
+      canvas.rotate(t * (f.big ? 2.4 : 1.4));
+      canvas.scale(1 + t * 0.5);
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(center: Offset.zero, width: 14, height: 10),
+              const Radius.circular(3)),
+          _fill..color = f.color.withValues(alpha: a));
+      canvas.restore();
+      // label
+      f.label ??= _makeLabel(f.text, f.color);
+      final lp = f.label!;
+      canvas.saveLayer(
+          Rect.fromCenter(
+              center: o.translate(0, -18), width: 160, height: 40),
+          Paint()..color = Color.fromRGBO(255, 255, 255, a));
+      lp.paint(canvas, Offset(o.dx - lp.width / 2, o.dy - 26));
+      canvas.restore();
+    }
+  }
+
+  tp.TextPainter _makeLabel(String text, Color color) => tp.TextPainter(
+        text: tp.TextSpan(
+          text: text,
+          style: tp.TextStyle(
+            fontFamily: 'Display',
+            fontSize: 15,
+            color: color,
+            letterSpacing: 1,
+            shadows: const [Shadow(color: Color(0xCC000000), blurRadius: 3)],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
   void _drawLoot(Canvas canvas) {
     for (final l in loot) {
       if (l.taken) continue;
@@ -2696,6 +2786,18 @@ class RoyaleGame extends FlameGame {
 
 /// Quadratic ease-out — blast rings shoot out fast then settle.
 double _easeOut(double t) => 1 - (1 - t) * (1 - t);
+
+/// A pickup flourish: the collected item rising, spinning and fading.
+class _PickupFx {
+  final Vector2 pos;
+  final Color color;
+  final String text;
+  final double life;
+  final bool big;
+  double t = 0;
+  tp.TextPainter? label;
+  _PickupFx(this.pos, this.color, this.text, this.life, this.big);
+}
 
 /// A permanent mark painted onto the ground (blood, scorch, bullet scar).
 class _Decal {

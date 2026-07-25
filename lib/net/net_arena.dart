@@ -9,8 +9,10 @@ import '../game/char_art.dart';
 import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/royale_game.dart';
+import '../game/sfx.dart';
 import '../ui/capture.dart';
-import '../ui/game_ui.dart' show Joystick, menuPad;
+import '../ui/game_ui.dart' show menuPad;
+import '../ui/hud_controls.dart';
 import 'net_client.dart';
 
 /// Full-screen multiplayer flow: a connect form (server address + room code),
@@ -1169,6 +1171,11 @@ class _ArenaViewState extends State<_ArenaView>
   // ---- client-side prediction (your own operator moves instantly) ----
   double _selfX = 0, _selfY = 0;
   bool _hasSelf = false;
+  /// Where the camera is this frame — used to mix positional audio.
+  Offset _camPos = Offset.zero;
+  int _lastHp = 100;
+  bool _wasAlive = true;
+  String? _lastBanner;
 
   // ---- locally simulated effects ----
   final List<_Tracer> _tracers = [];
@@ -1186,6 +1193,14 @@ class _ArenaViewState extends State<_ArenaView>
   int _fps = 0;
   int _frames = 0;
   Duration _fpsWindow = Duration.zero;
+
+  /// World repaint cap. Prediction + interpolation are already continuous, so
+  /// painting faster than this just burns GPU time and heats the phone.
+  static const double _maxRenderHz = 90;
+  double _sinceRender = 0;
+  /// HUD refresh is time-based too: ammo and cooldowns don't need 30Hz.
+  final ValueNotifier<int> _hud = ValueNotifier(0);
+  double _sinceHud = 0;
 
   static const double _speed = 250; // must match the server's playerSpeed
   static final math.Random _rng = math.Random();
@@ -1217,6 +1232,7 @@ class _ArenaViewState extends State<_ArenaView>
     _pump?.cancel();
     _ticker.dispose();
     _frame.dispose();
+    _hud.dispose();
     super.dispose();
   }
 
@@ -1304,10 +1320,57 @@ class _ArenaViewState extends State<_ArenaView>
       }
     }
 
+    final cam = _camTarget(c);
+    if (cam != null) {
+      _camPos = _pos(c, cam.id) ?? Offset(cam.x, cam.y);
+    }
+    _reactToState(c);
     _spawnEvents(c);
     _stepTracers(dt);
     _stepFx(dt);
-    _frame.value++;
+
+    _sinceRender += dt;
+    if (_sinceRender >= 1 / _maxRenderHz) {
+      _sinceRender = 0;
+      _frame.value++;
+    }
+    _sinceHud += dt;
+    if (_sinceHud >= 0.05) {
+      _sinceHud = 0;
+      _hud.value++;
+    }
+  }
+
+  /// Rendered position of a player, or null if we have never seen them.
+  Offset? _pos(NetClient c, int id) {
+    if (id == c.myId && _hasSelf) return Offset(_selfX, _selfY);
+    final l = c.lerpOf(id);
+    return l == null ? null : Offset(l[0], l[1]);
+  }
+
+  /// Audio + haptics driven by state changes: taking damage, dying, winning.
+  void _reactToState(NetClient c) {
+    final me = c.me;
+    if (me != null) {
+      if (me.hp < _lastHp && me.alive) Sfx.hurt();
+      if (_wasAlive && !me.alive) Sfx.death();
+      _lastHp = me.hp;
+      _wasAlive = me.alive;
+    }
+    final banner = c.matchWinner ?? c.roundBanner;
+    if (banner != null && banner != _lastBanner) Sfx.win();
+    _lastBanner = banner;
+  }
+
+  /// Where a shooter is being DRAWN right now — the predicted position for
+  /// you, the interpolated one for everybody else. Tracers must start here,
+  /// not at the snapshot position, or they visibly leave the wrong spot.
+  Offset _renderedPos(NetClient c, int shooter, double fallbackX,
+      double fallbackY) {
+    if (shooter == c.myId && _hasSelf) return Offset(_selfX, _selfY);
+    final l = c.lerpOf(shooter);
+    if (l != null) return Offset(l[0], l[1]);
+    return Offset(fallbackX, fallbackY);
   }
 
   /// Turns server events (shots / explosions / airdrops) into local visuals.
@@ -1316,14 +1379,16 @@ class _ArenaViewState extends State<_ArenaView>
       final id = WeaponId.values[s.wi.clamp(0, WeaponId.values.length - 1)];
       final w = kWeapons[id]!;
       // The muzzle, not the chest: the gun barrel sits ~2.15 body radii
-      // forward, exactly where the offline game spawns its rounds. Firing from
-      // the hit radius made online bullets appear out of the operator's body.
+      // forward, exactly where the offline game spawns its rounds.
       const muzzle = kPlayerRadius * 2.15;
+      final from = _renderedPos(c, s.shooter, s.x, s.y);
+      // your own aim is live; everyone else's comes with the event
+      final aim = s.shooter == c.myId ? _aim : s.aim;
       for (var i = 0; i < w.pellets; i++) {
         final jitter = (_rng.nextDouble() * 2 - 1) * w.spread;
-        final a = s.aim + jitter;
+        final a = aim + jitter;
         _tracers.add(_Tracer(
-          Offset(s.x + math.cos(a) * muzzle, s.y + math.sin(a) * muzzle),
+          from + Offset(math.cos(a) * muzzle, math.sin(a) * muzzle),
           Offset(math.cos(a) * w.bulletSpeed, math.sin(a) * w.bulletSpeed),
           w.range,
           w.color,
@@ -1331,19 +1396,34 @@ class _ArenaViewState extends State<_ArenaView>
         ));
       }
       // muzzle flash + smoke + brass, at the barrel
-      final tip =
-          Offset(s.x + math.cos(s.aim) * muzzle, s.y + math.sin(s.aim) * muzzle);
+      final tip = from + Offset(math.cos(aim) * muzzle, math.sin(aim) * muzzle);
       for (var i = 0; i < 3; i++) {
-        final a = s.aim + (_rng.nextDouble() - 0.5) * 0.6;
+        final a = aim + (_rng.nextDouble() - 0.5) * 0.6;
         _fx.add(_Fx(tip, Offset(math.cos(a) * 130, math.sin(a) * 130), 0.09, 4,
             const Color(0xFFFFE9A8)));
       }
-      _fx.add(_Fx(tip, Offset(math.cos(s.aim) * 30, math.sin(s.aim) * 30), 0.5,
-          5, const Color(0x55909090)));
+      _fx.add(_Fx(tip, Offset(math.cos(aim) * 30, math.sin(aim) * 30), 0.5, 5,
+          const Color(0x55909090)));
+      // brass casing flicking out to the side, like the offline game
+      final side = aim + 1.4;
+      _fx.add(_Fx(from + Offset(math.cos(aim) * 14, math.sin(aim) * 14),
+          Offset(math.cos(side) * 160, math.sin(side) * 160), 0.35, 2.2,
+          const Color(0xFFE8C15A)));
+      // AUDIO. The online arena used to be completely silent — every shot,
+      // blast and hit now sounds exactly like it does offline, mixed by how
+      // far away it happened.
+      if (s.shooter == c.myId) {
+        Sfx.shoot();
+      } else {
+        final d = (from - _camPos).distance;
+        if (d < 620) Sfx.shoot(vol: (0.18 * (1 - d / 620)).clamp(0.04, 0.18));
+      }
     }
     c.shotQueue.clear();
 
     for (final b in c.boomQueue) {
+      final d = (b - _camPos).distance;
+      if (d < 900) Sfx.boom();
       for (var i = 0; i < 22; i++) {
         final a = _rng.nextDouble() * math.pi * 2;
         final sp = 90 + _rng.nextDouble() * 300;
@@ -1419,6 +1499,23 @@ class _ArenaViewState extends State<_ArenaView>
 
   void _cycleSpectate() => setState(() => _specIdx++);
 
+  /// The equipped hero's skill icon, so the button reads the same as solo.
+  IconData _skillIcon() {
+    final hero = kHeroes[Profile.instance.hero.clamp(0, kHeroes.length - 1)];
+    switch (hero.skill) {
+      case SkillType.dash:
+        return Icons.bolt;
+      case SkillType.shield:
+        return Icons.shield;
+      case SkillType.frenzy:
+        return Icons.local_fire_department;
+      case SkillType.medic:
+        return Icons.healing;
+      case SkillType.grenadier:
+        return Icons.workspaces;
+    }
+  }
+
   /// The crate under your feet that would cost you the gun in your hands.
   /// (An empty slot is filled automatically by the server — no prompt needed.)
   NetLoot? _pickupTarget(NetClient c, NetPlayer me) {
@@ -1430,32 +1527,6 @@ class _ArenaViewState extends State<_ArenaView>
       return l;
     }
     return null;
-  }
-
-  /// Places a control at the player's saved position for this orientation,
-  /// with its own size and opacity — the same layout they set up for solo play.
-  Widget _place(Size s, String key, Widget child, double w, double h,
-      [EdgeInsets safe = EdgeInsets.zero]) {
-    final p = Profile.instance;
-    final sc = p.hudScaleOf(key);
-    final op = p.hudOpacityOf(key);
-    final ww = w * sc, hh = h * sc;
-    final f = p.hudPosOf(key);
-    final maxL = (s.width - safe.right - ww).clamp(0.0, s.width);
-    final maxT = (s.height - safe.bottom - hh).clamp(0.0, s.height);
-    final left =
-        (f[0] * s.width - ww / 2).clamp(safe.left.clamp(0.0, maxL), maxL);
-    final top =
-        (f[1] * s.height - hh / 2).clamp(safe.top.clamp(0.0, maxT), maxT);
-    return Positioned(
-      key: ValueKey('ctl-$key'),
-      left: left,
-      top: top,
-      child: Opacity(
-        opacity: op,
-        child: Transform.scale(scale: sc, child: child),
-      ),
-    );
   }
 
   void _aimStick(Offset dir) {
@@ -1623,215 +1694,6 @@ class _ArenaViewState extends State<_ArenaView>
         ),
       );
 
-  Widget _actionButton(
-      String icon, String label, Color color, bool ready, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: ready ? onTap : null,
-      child: Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withValues(alpha: 0.45),
-          border: Border.all(color: ready ? color : Colors.white24, width: 3),
-          boxShadow: ready
-              ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 12)]
-              : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Opacity(
-                opacity: ready ? 1 : 0.4,
-                child: Text(icon, style: const TextStyle(fontSize: 20))),
-            Text(label,
-                style: TextStyle(
-                    color: ready ? color : Colors.white38,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// SHIELD WALL button. Uses the same slab glyph the wall is drawn with in
-  /// the world, so the control and the thing it deploys read as one object.
-  Widget _wallButton(int charges, VoidCallback onTap) {
-    final ready = charges > 0;
-    const col = Color(0xFF7FE8FF);
-    return GestureDetector(
-      onTap: ready ? onTap : null,
-      child: Container(
-        width: 60,
-        height: 60,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withValues(alpha: 0.45),
-          border: Border.all(color: ready ? col : Colors.white24, width: 3),
-          boxShadow: ready
-              ? [BoxShadow(color: col.withValues(alpha: 0.45), blurRadius: 12)]
-              : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 24,
-              height: 16,
-              child: CustomPaint(painter: ShieldWallGlyph(lit: ready)),
-            ),
-            Text('$charges',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    color: ready ? col : Colors.white38)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// Weapon panel: what you're holding, its ammo, and a tap to reload.
-  Widget _weaponPanel(NetPlayer? me) {
-    final id = WeaponId.values[(me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)];
-    final w = kWeapons[id]!;
-    final ammo = me?.ammo ?? 0;
-    final low = ammo <= (w.mag * 0.3).ceil();
-    return GestureDetector(
-      onTap: () => _reloadQ = true,
-      child: Container(
-        width: 130,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: (me?.reloading ?? false)
-                  ? kSafeEdge
-                  : (low ? kAccent2 : w.color.withValues(alpha: 0.6))),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-                width: 100,
-                height: 22,
-                child: CustomPaint(painter: _GunPainter(id))),
-            Text(w.name.toUpperCase(),
-                style: TextStyle(
-                    color: w.color,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 12)),
-            Text((me?.reloading ?? false) ? 'RELOADING…' : '$ammo / ${w.mag}',
-                style: TextStyle(
-                    color: (me?.reloading ?? false)
-                        ? kSafeEdge
-                        : (low ? kAccent2 : Colors.white),
-                    fontWeight: FontWeight.w700,
-                    fontSize: 11)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// The second slot + a tap to switch. Online loot follows the same rule as
-  /// offline: it can fill an empty slot, never take the gun from your hands.
-  Widget _swapPanel(NetPlayer? me) {
-    final other = me == null || me.wi2 < 0
-        ? null
-        : WeaponId.values[me.wi2.clamp(0, WeaponId.values.length - 1)];
-    final col = other == null ? Colors.white24 : kWeapons[other]!.color;
-    return GestureDetector(
-      onTap: other == null ? null : () => _swapQ = true,
-      child: Container(
-        width: 74,
-        height: 66,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: other == null ? Colors.white24 : col.withValues(alpha: 0.8)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.swap_horiz_rounded, size: 12, color: Colors.white54),
-                SizedBox(width: 3),
-                Text('SWITCH',
-                    style: TextStyle(
-                        fontSize: 8,
-                        letterSpacing: 1,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white54)),
-              ],
-            ),
-            const SizedBox(height: 2),
-            SizedBox(
-              width: 60,
-              height: 20,
-              child: other == null
-                  ? const Center(
-                      child: Text('EMPTY',
-                          style: TextStyle(
-                              fontSize: 9,
-                              color: Colors.white30,
-                              fontWeight: FontWeight.w800)))
-                  : CustomPaint(painter: _GunPainter(other)),
-            ),
-            Text(other == null ? '—' : kWeapons[other]!.name.toUpperCase(),
-                maxLines: 1,
-                style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    color: other == null ? Colors.white24 : col)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _pickupPanel(NetClient c, NetPlayer? me) {
-    if (me == null || !me.alive) return const SizedBox.shrink();
-    final l = _pickupTarget(c, me);
-    if (l == null) return const SizedBox.shrink();
-    final id = WeaponId.values[l.wi.clamp(0, WeaponId.values.length - 1)];
-    final w = kWeapons[id]!;
-    return GestureDetector(
-      onTap: () => _takeQ = true,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.62),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: w.color, width: 2),
-          boxShadow: [
-            BoxShadow(color: w.color.withValues(alpha: 0.35), blurRadius: 14)
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-                width: 42, height: 18, child: CustomPaint(painter: _GunPainter(id))),
-            const SizedBox(width: 8),
-            Text('PICK UP  ${w.name.toUpperCase()}',
-                style: TextStyle(
-                    color: w.color,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900)),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
@@ -1879,11 +1741,13 @@ class _ArenaViewState extends State<_ArenaView>
             ),
           ),
         ),
-        // HUD/overlays only need to change when a snapshot lands (30 Hz).
+        // HUD/overlays refresh on a timer, not on every packet — rebuilding
+        // the whole control tree 30x a second was real, measurable jank.
         Positioned.fill(
           child: AnimatedBuilder(
-            animation: c.rev,
-            builder: (_, _) => _overlays(c, size, MediaQuery.of(context).padding),
+            animation: _hud,
+            builder: (_, _) =>
+                _overlays(c, size, MediaQuery.of(context).padding),
           ),
         ),
       ],
@@ -1894,7 +1758,7 @@ class _ArenaViewState extends State<_ArenaView>
     final me = c.me;
     final spectating = me != null && !me.alive && c.matchWinner == null;
     final cam = _camTarget(c);
-    final hpFrac = ((me?.hp ?? 0) / 100).clamp(0.0, 1.0);
+    final pickup = me == null ? null : _pickupTarget(c, me);
     return Stack(
       children: [
         // No snapshot for us yet: say so instead of showing an empty arena
@@ -2029,134 +1893,155 @@ class _ArenaViewState extends State<_ArenaView>
               ),
             ),
           ),
-        // Controls sit exactly where the player dragged them in the Controls
-        // editor — including the separate landscape layout. Stable keys keep
-        // the joystick State alive when banners come and go (otherwise a
-        // rebuild mid-drag left the stick stuck on).
-        _place(
+        // Controls come from the SHARED set (lib/ui/hud_controls.dart), so a
+        // custom room and a solo match hand you exactly the same sticks,
+        // buttons and panels in exactly the same places.
+        hudPlace(
           size,
           Profile.instance.leftHanded ? 'aim' : 'move',
-          Joystick(
-            key: const ValueKey('js-move'),
+          HudStick(
+            stickKey: const ValueKey('js-move'),
+            label: 'MOVE',
+            accent: kSafeEdge,
             onChange: (d) => _move = d,
             onRelease: () => _move = Offset.zero,
-            accent: kSafeEdge,
           ),
           132,
-          132,
+          158,
           safe,
         ),
-        _place(
+        hudPlace(
           size,
           Profile.instance.leftHanded ? 'move' : 'aim',
-          Joystick(
-            key: const ValueKey('js-aim'),
+          HudStick(
+            stickKey: const ValueKey('js-aim'),
+            label: 'AIM · FIRE',
+            accent: kAccent2,
             onChange: _aimStick,
             onRelease: () => _fire = false,
-            accent: kAccent2,
           ),
           132,
-          132,
+          158,
           safe,
         ),
-        _place(
-            size,
-            'nade',
-            _actionButton('💣', '${me?.nades ?? 0}', const Color(0xFF6ABF5A),
-                (me?.nades ?? 0) > 0, () => _nadeQ = true),
-            64,
-            64,
-            safe),
-        _place(
-            size,
-            'skill',
-            _actionButton('⚡', (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
-                const Color(0xFFB06BFF), (me?.cd ?? 0) <= 0, () => _skillQ = true),
-            64,
-            64,
-            safe),
-        _place(
-            size,
-            'wall',
-            _wallButton(me?.walls ?? 0, () => _wallQ = true),
-            60,
-            60,
-            safe),
-        _place(size, 'reload', _weaponPanel(me), 130, 70, safe),
-        _place(size, 'swap', _swapPanel(me), 74, 66, safe),
-        _place(size, 'pick', _pickupPanel(c, me), 168, 52, safe),
-        _place(
+        hudPlace(
+          size,
+          'skill',
+          HudActionButton(
+            glyph: Icon(_skillIcon(), size: 26, color: const Color(0xFFB06BFF)),
+            label: (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
+            color: const Color(0xFFB06BFF),
+            ready: (me?.cd ?? 0) <= 0,
+            onTap: () => _skillQ = true,
+          ),
+          64,
+          64,
+          safe,
+        ),
+        hudPlace(
+          size,
+          'nade',
+          HudActionButton(
+            glyph: const Text('💣', style: TextStyle(fontSize: 19)),
+            label: '${me?.nades ?? 0}',
+            color: const Color(0xFF6ABF5A),
+            ready: (me?.nades ?? 0) > 0,
+            onTap: () => _nadeQ = true,
+            size: 60,
+          ),
+          60,
+          60,
+          safe,
+        ),
+        hudPlace(
+          size,
+          'wall',
+          HudActionButton(
+            glyph: SizedBox(
+              width: 24,
+              height: 16,
+              child: CustomPaint(
+                  painter: ShieldWallGlyph(lit: (me?.walls ?? 0) > 0)),
+            ),
+            label: '${me?.walls ?? 0}',
+            color: const Color(0xFF7FE8FF),
+            ready: (me?.walls ?? 0) > 0,
+            onTap: () => _wallQ = true,
+            size: 60,
+          ),
+          60,
+          60,
+          safe,
+        ),
+        hudPlace(
+          size,
+          'reload',
+          HudWeaponPanel(
+            weapon: WeaponId.values[
+                (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)],
+            ammo: me?.ammo ?? 0,
+            reloading: me?.reloading ?? false,
+            reloadFrac: 0.5,
+            onTap: () => _reloadQ = true,
+          ),
+          130,
+          80,
+          safe,
+        ),
+        hudPlace(
+          size,
+          'swap',
+          HudSwapPanel(
+            other: (me == null || me.wi2 < 0)
+                ? null
+                : WeaponId.values[me.wi2.clamp(0, WeaponId.values.length - 1)],
+            onTap: () => _swapQ = true,
+          ),
+          74,
+          66,
+          safe,
+        ),
+        hudPlace(
+          size,
+          'fire',
+          HudFireMode(
+            supportsAuto: kWeapons[WeaponId.values[
+                    (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)]]!
+                .auto,
+            auto: Profile.instance.fireAuto,
+            onTap: () {},
+          ),
+          64,
+          64,
+          safe,
+        ),
+        hudPlace(
           size,
           'hp',
-          SizedBox(
-            width: 150,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('${me?.hp ?? 0} HP',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13,
-                        color: Colors.white,
-                        shadows: [Shadow(color: Colors.black, blurRadius: 3)])),
-                const SizedBox(height: 3),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: LinearProgressIndicator(
-                    value: hpFrac,
-                    minHeight: 12,
-                    backgroundColor: Colors.black45,
-                    valueColor: AlwaysStoppedAnimation(Color.lerp(
-                        const Color(0xFFFF4D4D),
-                        const Color(0xFF52E06A),
-                        hpFrac)!),
-                  ),
-                ),
-                if ((me?.vest ?? 0) > 0 || (me?.helmet ?? 0) > 0) ...[
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      if ((me?.vest ?? 0) > 0)
-                        Expanded(
-                          flex: 3,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: (me!.vest / 100).clamp(0.0, 1.0),
-                              minHeight: 5,
-                              backgroundColor: Colors.black45,
-                              valueColor: const AlwaysStoppedAnimation(
-                                  Color(0xFF7FC4FF)),
-                            ),
-                          ),
-                        ),
-                      if ((me?.vest ?? 0) > 0 && (me?.helmet ?? 0) > 0)
-                        const SizedBox(width: 4),
-                      if ((me?.helmet ?? 0) > 0)
-                        Expanded(
-                          flex: 2,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: (me!.helmet / 100).clamp(0.0, 1.0),
-                              minHeight: 5,
-                              backgroundColor: Colors.black45,
-                              valueColor: const AlwaysStoppedAnimation(
-                                  Color(0xFFC9D6A8)),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
+          HudHealth(
+            hp: me?.hp ?? 0,
+            vestFrac: (me?.vest ?? 0) / 100,
+            helmetFrac: (me?.helmet ?? 0) / 100,
           ),
           150,
-          44,
+          52,
           safe,
         ),
+        if (pickup != null)
+          hudPlace(
+            size,
+            'pick',
+            HudPickupPrompt(
+              offered: WeaponId.values[
+                  pickup.wi.clamp(0, WeaponId.values.length - 1)],
+              held: WeaponId.values[
+                  (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)],
+              onTap: () => _takeQ = true,
+            ),
+            168,
+            52,
+            safe,
+          ),
       ],
     );
   }
@@ -2177,21 +2062,6 @@ class _ArenaViewState extends State<_ArenaView>
               letterSpacing: 1)),
     );
   }
-}
-
-/// Draws a gun as a HUD icon (same art as the one in your operator's hands).
-class _GunPainter extends CustomPainter {
-  final WeaponId weapon;
-  const _GunPainter(this.weapon);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    drawGunIcon(canvas, Offset(size.width / 2, size.height / 2),
-        size.width * 0.96, weapon);
-  }
-
-  @override
-  bool shouldRepaint(covariant _GunPainter old) => old.weapon != weapon;
 }
 
 /// Renders the online arena. Same visual language as the offline match:
