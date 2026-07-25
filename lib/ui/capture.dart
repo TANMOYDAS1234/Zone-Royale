@@ -1,8 +1,13 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:flutter/material.dart' show ScaffoldMessenger, SnackBar;
 import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter/widgets.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 /// Grabs a `RepaintBoundary` (identified by [key]) as PNG bytes, or null.
 ///
@@ -14,7 +19,7 @@ import 'package:flutter/widgets.dart';
 /// Instead we wait for a frame to land and retry a couple of times — if the
 /// boundary genuinely isn't painted yet, `toImage` throws and we try again.
 Future<Uint8List?> captureBoundary(GlobalKey key,
-    {double pixelRatio = 2.0, int attempts = 3}) async {
+    {double pixelRatio = 1.6, int attempts = 2}) async {
   for (var i = 0; i < attempts; i++) {
     // let the in-flight frame finish so the boundary has painted
     await WidgetsBinding.instance.endOfFrame;
@@ -29,7 +34,79 @@ Future<Uint8List?> captureBoundary(GlobalKey key,
         // not painted yet (or transiently detached) — fall through and retry
       }
     }
-    await Future<void>.delayed(const Duration(milliseconds: 60));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
   }
   return null;
+}
+
+/// One share path for the whole game (result card, room result, anything else).
+///
+/// The old code swallowed every failure, so a share that didn't work looked
+/// exactly like a button that did nothing. This version:
+///  * captures the card, writes it to a uniquely-named cache file (a stale
+///    file with the same name could be re-shared by some targets),
+///  * shares image + text, and if that fails for any reason falls back to
+///    text-only, then to the clipboard,
+///  * ALWAYS tells the player what happened.
+Future<void> shareCard(
+  BuildContext context, {
+  required GlobalKey cardKey,
+  required String text,
+  String subject = 'Zone Royale',
+  String fileStem = 'zone_royale',
+}) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  void say(String msg, {int seconds = 2}) => messenger?.showSnackBar(SnackBar(
+        content: Text(msg),
+        duration: Duration(seconds: seconds),
+        backgroundColor: const Color(0xFF14181F),
+      ));
+
+  // Encoding the card and handing it to Android takes a moment. Say so
+  // immediately — silence for a second reads as "the button is broken".
+  say('Preparing your result card…', seconds: 1);
+
+  // Share sheets need an anchor rect on iPad; harmless (and useful) elsewhere.
+  final box = context.findRenderObject() as RenderBox?;
+  final origin = box != null && box.hasSize
+      ? box.localToGlobal(Offset.zero) & box.size
+      : const Rect.fromLTWH(0, 0, 1, 1);
+
+  Uint8List? png;
+  try {
+    png = await captureBoundary(cardKey);
+  } catch (_) {
+    png = null;
+  }
+
+  if (png != null) {
+    try {
+      final dir = await getTemporaryDirectory();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/${fileStem}_$stamp.png');
+      await file.writeAsBytes(png, flush: true);
+      final res = await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'image/png')],
+        text: text,
+        subject: subject,
+        sharePositionOrigin: origin,
+      ));
+      if (res.status == ShareResultStatus.success) return;
+      if (res.status == ShareResultStatus.dismissed) return; // user backed out
+    } catch (e) {
+      say('Image share failed — sending text instead');
+    }
+  }
+
+  // ---- text-only fallback ----
+  try {
+    final res = await SharePlus.instance.share(
+        ShareParams(text: text, subject: subject, sharePositionOrigin: origin));
+    if (res.status != ShareResultStatus.unavailable) return;
+  } catch (_) {
+    // no share target at all — fall through to the clipboard
+  }
+
+  await Clipboard.setData(ClipboardData(text: text));
+  say('No share app found — result copied to clipboard');
 }

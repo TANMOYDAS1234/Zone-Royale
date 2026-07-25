@@ -35,6 +35,12 @@ class RoyaleGame extends FlameGame {
   final List<Loot> loot = [];
   final List<Obstacle> obstacles = [];
   final List<Particle> particles = [];
+  /// Permanent marks on the ground — blood pools, scorch craters, bullet
+  /// scars. They never fade, so a firefight leaves the map looking like a
+  /// firefight happened there.
+  final List<_Decal> _decals = [];
+  /// Expanding blast rings (drawn additively over the ground).
+  final List<_Shock> _shocks = [];
   late Character player;
 
   // ---- zone (gas) ----
@@ -57,17 +63,22 @@ class RoyaleGame extends FlameGame {
 
   // ---- camera / feel ----
   final Vector2 cam = Vector2.zero();
-  double _shake = 0;
+  /// Screen-shake "trauma" in 0..1. The camera offset is trauma² so light hits
+  /// barely register and only real explosions kick — and it moves along a
+  /// smooth curve instead of teleporting a few pixels every frame. Random
+  /// per-frame jitter is what made the old shake impossible to aim through.
+  double _trauma = 0;
+  double _shakeX = 0, _shakeY = 0;
   double _time = 0;
-  int _frame = 0;
+  double _hudT = 0; // time since the last HUD refresh pulse
 
   // ---- render scratch (allocated once, reused every frame) ----
   Rect _viewRect = Rect.zero;
   final Paint _fill = Paint()..style = PaintingStyle.fill;
   final Paint _stroke = Paint()..style = PaintingStyle.stroke;
-  final Paint _layerPaint = Paint();
   final Paint _gasFillPaint = Paint()..color = kGasFill;
-  final Paint _clearPaint = Paint()..blendMode = BlendMode.clear;
+  /// Reused every frame — allocating a Path per frame churns the heap.
+  final Path _gasPath = Path();
   Paint _gridPaint = Paint()
     ..color = kGridColor
     ..strokeWidth = 1;
@@ -120,7 +131,33 @@ class RoyaleGame extends FlameGame {
   final List<_DmgText> _dmgTexts = []; // floating damage numbers
   final List<_KillLine> _killLog = []; // recent-eliminations kill feed
 
-  double get zoom => size.y <= 0 ? 1 : size.y / kViewHeight;
+  // ---- killstreaks (the bit people screenshot) ----
+  int streakKills = 0; // kills inside the current streak window
+  double _streakT = 0; // time left to extend the streak
+  int bestStreak = 0; // best multi-kill this match
+  String? banner; // DOUBLE KILL / TRIPLE KILL / RAMPAGE…
+  double _bannerT = 0;
+  double get bannerAlpha => (_bannerT / 0.4).clamp(0.0, 1.0);
+
+  // ---- airdrops: a marked crate with a top-tier gun, worth fighting over ----
+  double _nextDrop = kAirdropFirstAt;
+  int _dropsMade = 0;
+  Loot? airdrop; // live crate (for the minimap marker)
+  double airdropT = 0; // seconds since it landed (drives the beacon pulse)
+
+  /// World units shown vertically. Landscape shows fewer (the screen is wide),
+  /// so operators keep the same on-screen size instead of shrinking to dots.
+  double get viewHeight =>
+      size.x > size.y ? kViewHeightLandscape : kViewHeight;
+
+  double get zoom => size.y <= 0 ? 1 : size.y / viewHeight;
+
+  /// System bar / cutout insets, pushed in by the Flutter HUD layer. Canvas
+  /// overlays (kill feed, hit arcs) keep clear of them — held sideways the
+  /// gesture bar sits right where the kill feed used to run off the edge.
+  double safeRight = 0;
+  double safeLeft = 0;
+  double safeTop = 0;
   int get aliveCount => chars.where((c) => c.alive).length;
   Hero get currentHero =>
       kHeroes[Profile.instance.hero.clamp(0, kHeroes.length - 1)];
@@ -201,6 +238,8 @@ class RoyaleGame extends FlameGame {
     loot.clear();
     obstacles.clear();
     particles.clear();
+    _decals.clear();
+    _shocks.clear();
     _dmgTexts.clear();
     _killLog.clear();
     _hitMarks.clear();
@@ -209,7 +248,19 @@ class RoyaleGame extends FlameGame {
     _toastT = 0;
     _nextId = 0;
     _time = 0;
-    _shake = 0;
+    _trauma = 0;
+    _shakeX = 0;
+    _shakeY = 0;
+    pickupPrompt = null;
+    airdrop = null;
+    airdropT = 0;
+    _dropsMade = 0;
+    _nextDrop = kAirdropFirstAt;
+    streakKills = 0;
+    bestStreak = 0;
+    _streakT = 0;
+    banner = null;
+    _bannerT = 0;
 
     _buildObstacles();
     _buildLoot();
@@ -311,6 +362,20 @@ class RoyaleGame extends FlameGame {
     for (var i = 0; i < nades; i++) {
       loot.add(Loot(LootKind.grenade, _openSpot(centerBias: 0.98)));
     }
+    // Armour and shield walls are the gear worth detouring for — plentiful
+    // enough to find, scarce enough that grabbing them first matters.
+    final vests = (9 * areaScale).round().clamp(6, 60);
+    for (var i = 0; i < vests; i++) {
+      loot.add(Loot(LootKind.vest, _openSpot(centerBias: 0.98)));
+    }
+    final helmets = (9 * areaScale).round().clamp(6, 60);
+    for (var i = 0; i < helmets; i++) {
+      loot.add(Loot(LootKind.helmet, _openSpot(centerBias: 0.98)));
+    }
+    final walls = (8 * areaScale).round().clamp(5, 50);
+    for (var i = 0; i < walls; i++) {
+      loot.add(Loot(LootKind.wall, _openSpot(centerBias: 0.98)));
+    }
   }
 
   void _buildCharacters() {
@@ -341,8 +406,7 @@ class RoyaleGame extends FlameGame {
     player.skin = prof.skinColor;
     player.accessory = prof.accessory;
     player.hero = prof.hero.clamp(0, kHeroes.length - 1);
-    player.weaponId = prof.startWeapon;
-    player.ammo = player.weapon.mag;
+    player.equipLoadout(prof.startWeapon); // primary + pistol backup
     chars.add(player);
 
     for (var i = 0; i < botCount; i++) {
@@ -359,22 +423,33 @@ class RoyaleGame extends FlameGame {
       // Ranked-style difficulty (like BGMI / Free Fire): the higher your level
       // and rank, the fewer easy grunts and the more regulars & pros you face,
       // plus a small capped accuracy nudge. It plateaus at ~level 40 so the
-      // climb keeps challenging you but never becomes impossible to win.
+      // climb keeps challenging you but never becomes impossible to win. The
+      // CASUAL/NORMAL/HARDCORE choice then scales the whole curve.
+      final tier = Profile.instance.diff;
       final diff = (Profile.instance.level / 40.0).clamp(0.0, 1.0);
-      final gruntCut = lerpd(0.66, 0.30, diff); // fraction that are grunts
-      final regCut = lerpd(0.90, 0.72, diff); // grunts..regCut = regular, rest pro
+      final gruntCut = lerpd(0.72, 0.38, diff); // fraction that are grunts
+      final regCut = lerpd(0.93, 0.78, diff); // grunts..regCut = regular, rest pro
       final roll = randRange(0, 1);
       double skill;
       if (roll < gruntCut) {
-        skill = randRange(0.10, 0.38); // grunt: short vision, sprays, misses
+        skill = randRange(0.08, 0.34); // grunt: short vision, sprays, misses
       } else if (roll < regCut) {
-        skill = randRange(0.40, 0.60); // regular
+        skill = randRange(0.36, 0.56); // regular
       } else {
-        skill = randRange(0.66, 0.92); // pro
+        skill = randRange(0.60, 0.86); // pro
       }
-      b.aiSkill = (skill + lerpd(0.0, 0.12, diff)).clamp(0.08, 0.95);
+      b.aiSkill =
+          ((skill + lerpd(0.0, 0.10, diff)) * tier.skill).clamp(0.06, 0.92);
+      // Bots hit softer than you do — a squad shouldn't melt you in one burst.
+      b.aiDamage = (tier.damage * randRange(0.9, 1.1)).clamp(0.4, 1.05);
       b.aim = randRange(0, kTau);
       b.aiScan = randRange(0, 0.3); // stagger first scan
+      // some bots land already armed so early fights aren't all pistols
+      b.equipLoadout(chance(0.5) ? weighted(kLootTable) : WeaponId.pistol);
+      // and some land geared — tougher bots wear more of it
+      if (chance(0.25 + 0.35 * b.aiSkill)) b.vest = kVestDurability;
+      if (chance(0.18 + 0.30 * b.aiSkill)) b.helmet = kHelmetDurability;
+      b.walls = chance(0.5) ? 1 : 0;
       chars.add(b);
     }
   }
@@ -406,7 +481,7 @@ class RoyaleGame extends FlameGame {
     super.update(dt);
     dt = dt.clamp(0.0, 1 / 30);
     _time += dt;
-    _shake = math.max(0, _shake - dt * 40);
+    _updateShake(dt);
 
     if (_toastT > 0) {
       _toastT -= dt;
@@ -415,8 +490,14 @@ class RoyaleGame extends FlameGame {
 
     if (playing) _step(dt);
     _updateCamera(dt);
-    _frame++;
-    if (_frame % 3 == 0) ticker.value++; // ~20 Hz HUD refresh (was every frame)
+    // HUD refresh is time-based, not frame-based: on a 120Hz panel "every 3rd
+    // frame" meant rebuilding the whole HUD 40x a second for numbers that only
+    // need ~20. Half the widget work, no visible difference.
+    _hudT += dt;
+    if (_hudT >= 0.05) {
+      _hudT = 0;
+      ticker.value++;
+    }
   }
 
   void _step(double dt) {
@@ -430,6 +511,9 @@ class RoyaleGame extends FlameGame {
       if (c.muzzle > 0) c.muzzle -= dt;
       if (c.hitFlash > 0) c.hitFlash -= dt;
       if (c.throwCd > 0) c.throwCd -= dt;
+      if (c.swapT > 0) c.swapT -= dt;
+      if (c.wallCd > 0) c.wallCd -= dt;
+      if (c.armourFlash > 0) c.armourFlash -= dt;
       if (c.skillCd > 0) c.skillCd -= dt;
       if (c.shieldT > 0) c.shieldT -= dt;
       if (c.frenzyT > 0) c.frenzyT -= dt;
@@ -437,9 +521,21 @@ class RoyaleGame extends FlameGame {
         c.reloadT -= dt;
         if (c.reloadT <= 0) c.ammo = c.weapon.mag;
       }
-      // kick up dust while running
-      if (c.vel.length2 > 12000 && chance(5 * dt)) {
-        _spawnDust(c.pos.x + randRange(-6, 6), c.pos.y + c.radius * 0.55);
+      // kick up dust while running, and leave boot prints behind
+      if (c.vel.length2 > 12000) {
+        if (chance(5 * dt)) {
+          _spawnDust(c.pos.x + randRange(-6, 6), c.pos.y + c.radius * 0.55);
+        }
+        c.stepT -= dt;
+        if (c.stepT <= 0) {
+          c.stepT = 0.26;
+          final side = Vector2(-c.vel.y, c.vel.x).normalized() *
+              (c.stepFoot ? 7.0 : -7.0);
+          c.stepFoot = !c.stepFoot;
+          _decals.add(_Decal(c.pos + side, 11, 6, angleOf(c.vel),
+              const Color(0x33000000)));
+          if (_decals.length > 150) _decals.removeAt(0);
+        }
       }
     }
     _separateCharacters();
@@ -447,6 +543,9 @@ class RoyaleGame extends FlameGame {
     _updateGrenades(dt);
     _updateParticles(dt);
     _updateZone(dt);
+    _updateWalls(dt);
+    _updateAirdrop(dt);
+    _updateStreak(dt);
     _pickups();
     for (final m in _hitMarks) {
       m.life -= dt;
@@ -534,7 +633,30 @@ class RoyaleGame extends FlameGame {
     cam.setFrom(cam + (target - cam) * k);
   }
 
-  void addShake(double v) => _shake = math.min(16, _shake + v);
+  /// Queue screen shake. [v] is trauma (see [_trauma]); the player's SCREEN
+  /// SHAKE slider scales it, and 0 turns it off completely.
+  void addShake(double v) {
+    final s = Profile.instance.shake;
+    if (s <= 0.001) return;
+    _trauma = math.min(1.0, _trauma + v * s);
+  }
+
+  /// Smooth, continuous shake: two out-of-phase sine sums per axis. Because the
+  /// offset follows a curve rather than a fresh random number each frame, the
+  /// picture *sways* instead of vibrating — you can still track a target.
+  void _updateShake(double dt) {
+    _trauma = math.max(0, _trauma - dt * 1.9); // ~0.5s to settle from full
+    if (_trauma <= 0) {
+      _shakeX = 0;
+      _shakeY = 0;
+      return;
+    }
+    final amp = _trauma * _trauma * kShakeMaxPx;
+    double wob(double t) =>
+        math.sin(t) * 0.62 + math.sin(t * 2.17 + 1.9) * 0.38;
+    _shakeX = amp * wob(_time * 27);
+    _shakeY = amp * wob(_time * 23.4 + 11.7);
+  }
 
   void _setToast(String msg) {
     toast = msg;
@@ -593,7 +715,7 @@ class RoyaleGame extends FlameGame {
 
   void _fire(Character c) {
     final w = c.weapon;
-    if (c.reloading || c.cooldown > 0) return;
+    if (c.reloading || c.cooldown > 0 || c.swapping) return;
     if (c.ammo <= 0) {
       _startReload(c);
       return;
@@ -602,13 +724,14 @@ class RoyaleGame extends FlameGame {
     c.cooldown = w.fireInterval * (c.frenzyT > 0 ? 0.45 : 1.0); // VORTEX frenzy
     c.muzzle = 0.06;
 
+    final dmg = w.damage * (c.isBot ? c.aiDamage : 1.0);
     for (var i = 0; i < w.pellets; i++) {
       final jitter = w.pellets > 1
           ? randRange(-w.spread, w.spread)
           : gaussian() * w.spread;
       final dir = fromAngle(c.aim + jitter);
       final origin = c.pos + dir * (c.radius + 8);
-      bullets.add(Bullet(origin.clone(), dir * w.bulletSpeed, w.damage, w.range,
+      bullets.add(Bullet(origin.clone(), dir * w.bulletSpeed, dmg, w.range,
           w.color, c.id, tracer: _tracerW(w.id)));
     }
     c.knock.setFrom(c.knock + fromAngle(c.aim, -w.bulletSpeed * 0.012));
@@ -620,11 +743,13 @@ class RoyaleGame extends FlameGame {
     }
 
     if (c == player) {
+      // Firing shake is the one that hurts your aim the most, so it's the
+      // lightest — a kick you feel, not a picture that jumps.
       addShake(w.id == WeaponId.shotgun
-          ? 7
+          ? kShakeFireHeavy
           : w.id == WeaponId.sniper
-              ? 9
-              : 3);
+              ? kShakeFireSniper
+              : kShakeFireLight);
     }
     if (c.ammo <= 0) _startReload(c);
   }
@@ -646,11 +771,15 @@ class RoyaleGame extends FlameGame {
 
       var hitT = 2.0;
       Character? hitChar;
+      Obstacle? hitWall;
       for (final o in obstacles) {
         if (!o.blocks) continue;
         final t =
             segRect(b.prev.x, b.prev.y, b.pos.x, b.pos.y, o.x, o.y, o.w, o.h);
-        if (t >= 0 && t < hitT) hitT = t;
+        if (t >= 0 && t < hitT) {
+          hitT = t;
+          hitWall = o.isShield ? o : null; // shield walls take damage
+        }
       }
       for (final c in chars) {
         if (!c.alive || c.id == b.ownerId) continue;
@@ -668,8 +797,21 @@ class RoyaleGame extends FlameGame {
         if (hitChar != null) {
           _damage(hitChar, b.damage, b.ownerId, b.vel);
           _spawnBlood(hx, hy, b.vel, hitChar.color);
+          if (chance(0.3)) {
+            _addDecal(Vector2(hx, hy), randRange(14, 24), randRange(9, 16),
+                const Color(0x66450C0C));
+          }
+        } else if (hitWall != null) {
+          // a deployed wall soaks the round and cracks
+          hitWall.hp -= b.damage;
+          _spawnSparks(hx, hy, const Color(0xFF9FF0FF));
         } else {
           _spawnSparks(hx, hy, b.color);
+          // bullet scar on the cover you just chipped
+          if (chance(0.35)) {
+            _addDecal(Vector2(hx, hy), randRange(5, 9), randRange(4, 7),
+                const Color(0x55000000));
+          }
         }
         b.dead = true;
       }
@@ -713,11 +855,27 @@ class RoyaleGame extends FlameGame {
     }
     _spawnExplosion(g.pos);
     Sfx.boom();
-    if (g.pos.distanceTo(cam) < 720) addShake(13);
+    // blasts still hit hard — but they fall off with distance
+    final d = g.pos.distanceTo(cam);
+    if (d < 720) addShake(kShakeBoom * (1 - d / 720));
   }
 
   void _spawnExplosion(Vector2 p) {
-    for (var i = 0; i < 26; i++) {
+    // scorched ground that stays for the rest of the match
+    _addDecal(p, randRange(90, 120), randRange(70, 95), const Color(0x77120C08));
+    _shocks.add(_Shock(p.clone(), kGrenadeRadius * 1.15, 0.42));
+    // white-hot core
+    for (var i = 0; i < 8; i++) {
+      particles.add(Particle(
+        p.clone(),
+        fromAngle(randRange(0, kTau), randRange(30, 160)),
+        randRange(0.1, 0.2),
+        randRange(7, 14),
+        const Color(0xFFFFF3C4),
+        glow: true,
+      ));
+    }
+    for (var i = 0; i < _fxCount(26); i++) {
       particles.add(Particle(
         p.clone(),
         fromAngle(randRange(0, kTau), randRange(80, 380)),
@@ -727,25 +885,53 @@ class RoyaleGame extends FlameGame {
         glow: true,
       ));
     }
-    for (var i = 0; i < 10; i++) {
+    // rolling smoke that lingers and drifts
+    for (var i = 0; i < _fxCount(14); i++) {
+      particles.add(Particle(
+        p + fromAngle(randRange(0, kTau), randRange(0, 40)),
+        fromAngle(randRange(0, kTau), randRange(15, 90)),
+        randRange(0.8, 1.6),
+        randRange(8, 18),
+        const Color(0x77494952),
+      ));
+    }
+    // dirt kicked out sideways
+    for (var i = 0; i < 8; i++) {
       particles.add(Particle(
         p.clone(),
-        fromAngle(randRange(0, kTau), randRange(20, 120)),
-        randRange(0.5, 1.0),
-        randRange(6, 13),
-        const Color(0x88555560),
+        fromAngle(randRange(0, kTau), randRange(120, 300)),
+        randRange(0.3, 0.7),
+        randRange(2, 4),
+        const Color(0xAA6B5A42),
       ));
     }
   }
 
+  void _addDecal(Vector2 p, double rx, double ry, Color color) {
+    final cap = Profile.instance.gfx.decals;
+    if (cap <= 0) return;
+    _decals.add(_Decal(p.clone(), rx, ry, randRange(0, kTau), color));
+    // hard cap: old marks drop off so a long match can't bloat the draw list
+    while (_decals.length > cap) {
+      _decals.removeAt(0);
+    }
+  }
+
+  /// Particle budget for one effect, scaled by the graphics setting.
+  int _fxCount(int n) =>
+      (n * Profile.instance.gfx.fx).round().clamp(1, n * 2);
+
   void _damage(Character c, double dmg, int by, Vector2 dir) {
     if (!c.alive) return;
     if (c.shieldT > 0) dmg *= kShieldCut; // BASTION shield
+    final before = dmg;
+    dmg = c.soak(dmg); // vest + helmet eat their share and wear down
+    if (c == player && dmg < before) Sfx.hit(); // metallic "tink" on armour
     c.hp -= dmg;
     c.hitFlash = 0.12;
     if (dir.length2 > 0.01) c.knock.setFrom(c.knock + dir.normalized() * 90);
     if (c == player) {
-      addShake(4);
+      addShake(kShakeHurt);
       Sfx.hurt();
       // BGMI-style: remember which way the shot came from for an on-screen arc.
       if (by >= 0 && dir.length2 > 0.001) {
@@ -848,9 +1034,11 @@ class RoyaleGame extends FlameGame {
       c.aiScan = randRange(0.18, 0.34);
       // Vision scales with skill — grunts see barely past your own view,
       // only pros spot you from far. This kills the "shot from nowhere" feel.
-      final enemy = _nearestEnemy(c, lerpd(360, 540, c.aiSkill));
+      final tier = Profile.instance.diff;
+      final enemy = _nearestEnemy(c, lerpd(340, 520, c.aiSkill) * tier.vision);
       if (enemy != null && c.aiEnemy?.id != enemy.id) {
-        c.aiReact = lerpd(0.85, 0.12, c.aiSkill); // grunts hesitate
+        // grunts hesitate before opening up — this is your window to react
+        c.aiReact = lerpd(0.95, 0.16, c.aiSkill) * tier.react;
       }
       c.aiEnemy = enemy;
     }
@@ -863,6 +1051,18 @@ class RoyaleGame extends FlameGame {
         c.aim = angleOf(c.aiEnemy!.pos - c.pos);
         _throw(c);
       }
+    }
+
+    // Hurt and being shot at? Throw up cover, like a real player would. Only
+    // the better bots think of it, so it reads as skill rather than scripting.
+    if (c.aiEnemy != null &&
+        c.walls > 0 &&
+        c.wallCd <= 0 &&
+        c.hp < kMaxHp * 0.55 &&
+        c.aiSkill > 0.45 &&
+        chance(0.5 * dt)) {
+      c.aim = angleOf(c.aiEnemy!.pos - c.pos);
+      _deployWall(c);
     }
 
     if (outside) {
@@ -1026,12 +1226,99 @@ class RoyaleGame extends FlameGame {
   }
 
   // =====================================================================
+  //  AIRDROPS + KILLSTREAKS
+  // =====================================================================
+  /// Every so often a flare goes up inside the safe zone and a crate lands with
+  /// a top-tier gun in it. It's marked on the minimap for everyone, which turns
+  /// a quiet mid-game into a fight people actually want to have.
+  void _updateAirdrop(double dt) {
+    if (airdrop != null) {
+      airdropT += dt;
+      if (airdrop!.taken) {
+        airdrop = null; // someone claimed it
+      }
+    }
+    if (_dropsMade >= kAirdropMax) return;
+    _nextDrop -= dt;
+    if (_nextDrop > 0) return;
+    _dropsMade++;
+    _nextDrop = kAirdropEvery;
+    // land it inside the current circle so it's always reachable
+    Vector2 spot = zoneCenter.clone();
+    for (var i = 0; i < 40; i++) {
+      final a = randRange(0, kTau);
+      final r = randRange(zoneRadius * 0.15, zoneRadius * 0.75);
+      final p = Vector2(zoneCenter.x + math.cos(a) * r,
+          zoneCenter.y + math.sin(a) * r);
+      if (p.x < 140 || p.x > worldSize - 140) continue;
+      if (p.y < 140 || p.y > worldSize - 140) continue;
+      if (_inWall(p.x, p.y)) continue;
+      spot = p;
+      break;
+    }
+    final crate = Loot(LootKind.weapon, spot, weapon: weighted(kAirdropTable))
+      ..airdrop = true;
+    loot.add(crate);
+    airdrop = crate;
+    airdropT = 0;
+    for (var i = 0; i < 18; i++) {
+      particles.add(Particle(
+          spot.clone(),
+          fromAngle(randRange(0, kTau), randRange(40, 190)),
+          randRange(0.4, 0.9),
+          randRange(3, 7),
+          const Color(0xFFFFB02E),
+          glow: true));
+    }
+    Sfx.zone();
+    _setToast('📦 AIRDROP INCOMING — check your map');
+  }
+
+  void _updateStreak(double dt) {
+    if (_streakT > 0) {
+      _streakT -= dt;
+      if (_streakT <= 0) streakKills = 0; // window closed
+    }
+    if (_bannerT > 0) {
+      _bannerT -= dt;
+      if (_bannerT <= 0) banner = null;
+    }
+  }
+
+  static const _streakNames = [
+    'DOUBLE KILL',
+    'TRIPLE KILL',
+    'QUAD KILL',
+    'RAMPAGE',
+    'UNSTOPPABLE',
+    'GODLIKE',
+  ];
+
+  void _registerPlayerKill() {
+    _streakT = 6.0; // 6s to keep the chain alive
+    streakKills++;
+    if (streakKills > bestStreak) bestStreak = streakKills;
+    if (streakKills >= 2) {
+      banner = _streakNames[
+          (streakKills - 2).clamp(0, _streakNames.length - 1)];
+      _bannerT = 1.8;
+      Sfx.win(vol: 0.35);
+    }
+  }
+
+  // =====================================================================
   //  LOOT
   // =====================================================================
+  /// The weapon crate the player is standing on that needs a deliberate tap.
+  /// Set when both slots are full — the HUD turns this into a PICK UP button.
+  /// While it's null, nothing on the ground can change what you're holding.
+  Loot? pickupPrompt;
+
   void _pickups() {
     // Dropped weapons are collected here and added AFTER iteration finishes —
     // adding to `loot` while looping over it throws ConcurrentModificationError.
     List<Loot>? dropped;
+    Loot? prompt;
     for (final c in chars) {
       if (!c.alive) continue;
       for (final l in loot) {
@@ -1054,30 +1341,192 @@ class RoyaleGame extends FlameGame {
             Sfx.pickup();
             _setToast('+2 grenades');
           }
-        } else {
-          if (l.weapon == c.weaponId) continue;
-          if (c.weaponId != WeaponId.pistol) {
-            // Drop the old gun BEHIND the character with a short pickup delay
-            // so it can't be instantly re-grabbed (that caused a swap flicker).
-            (dropped ??= []).add(
-                Loot(LootKind.weapon,
-                    c.pos - fromAngle(c.aim) * (c.radius + 26),
-                    weapon: c.weaponId)
-                  ..readyAt = _time + 1.6);
-          }
-          c.weaponId = l.weapon!;
-          c.ammo = c.weapon.mag;
-          c.reloadT = 0;
+        } else if (l.kind == LootKind.vest) {
+          if (c.vest >= kVestDurability * 0.9) continue; // already geared
+          c.vest = kVestDurability;
           l.taken = true;
           if (c == player) {
             Sfx.pickup();
+            _setToast('🦺 Vest equipped  ·  -30% damage');
+          }
+        } else if (l.kind == LootKind.helmet) {
+          if (c.helmet >= kHelmetDurability * 0.9) continue;
+          c.helmet = kHelmetDurability;
+          l.taken = true;
+          if (c == player) {
+            Sfx.pickup();
+            _setToast('⛑ Helmet equipped  ·  -22% damage');
+          }
+        } else if (l.kind == LootKind.wall) {
+          if (c.walls >= kShieldWallMax) continue;
+          c.walls = math.min(kShieldWallMax, c.walls + 1);
+          l.taken = true;
+          if (c == player) {
+            Sfx.pickup();
+            _setToast('+1 shield wall');
+          }
+        } else {
+          final w = l.weapon!;
+          if (c.slots.contains(w)) continue; // already carrying one
+          if (c.addWeapon(w)) {
+            // free slot — always safe to take, nothing leaves your hands
+            l.taken = true;
+            if (c.isBot) {
+              c.equipBest();
+            } else {
+              Sfx.pickup();
+              _setToast('${kWeapons[w]!.name} stowed  ·  tap SWITCH');
+            }
+            continue;
+          }
+          if (c.isBot) {
+            // bots trade up on their own, but only for a clearly better gun
+            final worst =
+                weaponScore(c.slots[0]!) <= weaponScore(c.slots[1]!) ? 0 : 1;
+            if (weaponScore(w) > weaponScore(c.slots[worst]!) + 0.05) {
+              (dropped ??= []).add(Loot(LootKind.weapon,
+                  c.pos - fromAngle(c.aim) * (c.radius + 26),
+                  weapon: c.slots[worst])
+                ..readyAt = _time + 1.6);
+              c.slots[worst] = w;
+              c.slotAmmo[worst] = kWeapons[w]!.mag;
+              c.equipBest();
+              l.taken = true;
+            }
+            continue;
+          }
+          // Both slots full, but the spare one is only the backup pistol and
+          // this is a real gun: quietly stow it there. Your hands are never
+          // touched, so this can't cost you a fight — it just saves a tap.
+          final spare = 1 - c.slot;
+          if (c.slots[spare] == WeaponId.pistol && w != WeaponId.pistol) {
+            c.slots[spare] = w;
+            c.slotAmmo[spare] = kWeapons[w]!.mag;
+            l.taken = true;
+            Sfx.pickup();
+            _setToast('${kWeapons[w]!.name} stowed  ·  tap SWITCH');
+            continue;
+          }
+          // BOTH SLOTS FULL + it's you: the game does NOT decide. Either you
+          // opted into auto-swap in Profile, or the HUD offers a PICK UP tap.
+          if (Profile.instance.autoSwapWeapons) {
+            final old = c.replaceWeapon(w);
+            if (old != null) {
+              (dropped ??= []).add(Loot(LootKind.weapon,
+                  c.pos - fromAngle(c.aim) * (c.radius + 26),
+                  weapon: old)
+                ..readyAt = _time + 1.6);
+            }
+            l.taken = true;
+            Sfx.pickup();
             _setToast('Picked up ${c.weapon.name}');
+          } else {
+            prompt ??= l;
           }
         }
       }
     }
+    pickupPrompt = prompt;
     loot.removeWhere((l) => l.taken);
     if (dropped != null) loot.addAll(dropped);
+  }
+
+  /// PICK UP button — swap the crate you're standing on into your hands,
+  /// dropping the gun it replaces at your feet.
+  void takePickup() {
+    final l = pickupPrompt;
+    if (l == null || l.taken || !playing || !player.alive) return;
+    final w = l.weapon;
+    if (w == null) return;
+    final old = player.replaceWeapon(w);
+    l.taken = true;
+    pickupPrompt = null;
+    if (old != null) {
+      loot.add(Loot(LootKind.weapon,
+          player.pos - fromAngle(player.aim) * (player.radius + 26),
+          weapon: old)
+        ..readyAt = _time + 1.2);
+    }
+    Sfx.pickup();
+    _setToast('Picked up ${player.weapon.name}');
+  }
+
+  /// SHIELD WALL — drops a slab of cover a couple of steps in front of you,
+  /// square-on to where you're facing. It stops bullets and bodies, takes
+  /// damage, and melts after [kShieldWallLife] seconds. This is the "oh no —
+  /// wall!" button that turns a lost fight into a reset.
+  void deployWall() {
+    if (!playing) return;
+    _deployWall(player);
+  }
+
+  void _deployWall(Character c) {
+    if (!c.alive || c.walls <= 0 || c.wallCd > 0) return;
+    // stand it up perpendicular to the aim, a short step ahead
+    final ahead = c.pos + fromAngle(c.aim) * (c.radius + 46);
+    final horizontal =
+        math.sin(c.aim).abs() > math.cos(c.aim).abs(); // facing up/down?
+    final w = horizontal ? kShieldWallWidth : kShieldWallThickness;
+    final h = horizontal ? kShieldWallThickness : kShieldWallWidth;
+    final x = clampd(ahead.x - w / 2, 4, worldSize - w - 4);
+    final y = clampd(ahead.y - h / 2, 4, worldSize - h - 4);
+    // don't let someone wall themselves inside solid cover
+    if (_inWall(ahead.x, ahead.y, 4)) {
+      if (c == player) _setToast('No room for a wall here');
+      return;
+    }
+    c.walls--;
+    c.wallCd = kShieldWallCooldown;
+    obstacles.add(Obstacle(ObstacleKind.shield, x, y, w, h,
+        hp: kShieldWallHp, life: kShieldWallLife, ownerId: c.id));
+    for (var i = 0; i < 14; i++) {
+      particles.add(Particle(
+          Vector2(x + randRange(0, w), y + randRange(0, h)),
+          fromAngle(randRange(0, kTau), randRange(20, 90)),
+          randRange(0.2, 0.5),
+          randRange(2, 5),
+          const Color(0xFF7FE8FF),
+          glow: true));
+    }
+    if (c == player) {
+      Sfx.skill();
+      _setToast('Shield wall up  ·  ${c.walls} left');
+    }
+  }
+
+  void _updateWalls(double dt) {
+    var dirty = false;
+    for (final o in obstacles) {
+      if (!o.isShield) continue;
+      o.life -= dt;
+      if (o.life <= 0 || o.hp <= 0) dirty = true;
+    }
+    if (!dirty) return;
+    for (final o in obstacles) {
+      if (!o.isShield || (o.life > 0 && o.hp > 0)) continue;
+      // puff of shards as it goes
+      for (var i = 0; i < 10; i++) {
+        particles.add(Particle(
+            Vector2(o.x + randRange(0, o.w), o.y + randRange(0, o.h)),
+            fromAngle(randRange(0, kTau), randRange(20, 120)),
+            randRange(0.2, 0.5),
+            randRange(2, 4),
+            const Color(0xFF9FF0FF),
+            glow: true));
+      }
+    }
+    obstacles.removeWhere((o) => o.isShield && (o.life <= 0 || o.hp <= 0));
+  }
+
+  /// SWITCH button (Q on desktop) — change which of your two guns is in hand.
+  void swapWeapon() {
+    if (!playing || !player.alive) return;
+    if (player.switchSlot()) {
+      Sfx.reload();
+      _setToast('${player.weapon.name} ready');
+    } else {
+      _setToast('No second weapon');
+    }
   }
 
   // =====================================================================
@@ -1097,10 +1546,18 @@ class RoyaleGame extends FlameGame {
         killer.kills++;
         _addKillLine(killer, c);
       }
-      if (by == player.id && c != player) _setToast('Eliminated ${c.name}');
+      if (by == player.id && c != player) {
+        _setToast('Eliminated ${c.name}');
+        _registerPlayerKill(); // DOUBLE KILL / TRIPLE KILL / RAMPAGE…
+      }
     }
-    if (c.weaponId != WeaponId.pistol) {
-      loot.add(Loot(LootKind.weapon, c.pos.clone(), weapon: c.weaponId));
+    // everything they were carrying spills out (pistols are worthless)
+    for (var i = 0; i < c.slots.length; i++) {
+      final w = c.slots[i];
+      if (w == null || w == WeaponId.pistol) continue;
+      loot.add(Loot(LootKind.weapon,
+          c.pos + fromAngle(randRange(0, kTau), randRange(0, 22)),
+          weapon: w));
     }
     if (chance(0.5)) loot.add(Loot(LootKind.medkit, c.pos.clone(), heal: 45));
 
@@ -1184,6 +1641,10 @@ class RoyaleGame extends FlameGame {
       p.vel.setFrom(p.vel * (1 - (3 * dt).clamp(0.0, 1.0)));
     }
     particles.removeWhere((p) => p.life <= 0);
+    for (final s in _shocks) {
+      s.t += dt;
+    }
+    _shocks.removeWhere((s) => s.t >= s.life);
   }
 
   void _spawnMuzzle(Character c) {
@@ -1223,7 +1684,7 @@ class RoyaleGame extends FlameGame {
 
   void _spawnBlood(double x, double y, Vector2 dir, Color color) {
     final base = dir.length2 > 0.01 ? angleOf(dir) : 0.0;
-    for (var i = 0; i < 8; i++) {
+    for (var i = 0; i < _fxCount(8); i++) {
       final a = base + randRange(-0.7, 0.7);
       particles.add(Particle(Vector2(x, y), fromAngle(a, randRange(40, 220)),
           randRange(0.2, 0.5), randRange(2, 4.5), color));
@@ -1257,19 +1718,26 @@ class RoyaleGame extends FlameGame {
   }
 
   void _spawnDeath(Character c) {
-    for (var i = 0; i < 22; i++) {
+    for (var i = 0; i < _fxCount(22); i++) {
       final a = randRange(0, kTau);
       particles.add(Particle(c.pos.clone(), fromAngle(a, randRange(60, 320)),
           randRange(0.3, 0.8), randRange(2.5, 6), c.color));
     }
-    // lingering blood pool
+    // a blood pool that stays on the ground for the rest of the match
+    _addDecal(c.pos, randRange(46, 66), randRange(34, 48),
+        const Color(0x99400A0A));
+    for (var i = 0; i < 4; i++) {
+      _addDecal(c.pos + fromAngle(randRange(0, kTau), randRange(16, 46)),
+          randRange(14, 26), randRange(10, 18), const Color(0x77380909));
+    }
+    // dropped kit puffs
     for (var i = 0; i < 6; i++) {
       particles.add(Particle(
           c.pos + fromAngle(randRange(0, kTau), randRange(0, 14)),
           fromAngle(randRange(0, kTau), randRange(3, 16)),
-          randRange(2.2, 3.6),
+          randRange(1.4, 2.4),
           randRange(6, 12),
-          const Color(0xCC5A0E0E)));
+          const Color(0x66603030)));
     }
   }
 
@@ -1338,7 +1806,7 @@ class RoyaleGame extends FlameGame {
     p.skillCd = skillMaxCd;
     Sfx.skill();
     _setToast('${hero.name} — ${hero.desc.split(' — ').first}!');
-    addShake(5);
+    addShake(kShakeSkill);
   }
 
   Vector2 screenToWorld(Vector2 s) => cam + (s - size / 2) / zoom;
@@ -1351,8 +1819,8 @@ class RoyaleGame extends FlameGame {
     super.render(canvas);
     if (size.x <= 0) return;
     final z = zoom;
-    final sx = _shake > 0 ? randRange(-_shake, _shake) : 0.0;
-    final sy = _shake > 0 ? randRange(-_shake, _shake) : 0.0;
+    final sx = _shakeX;
+    final sy = _shakeY;
 
     _viewRect = Rect.fromCenter(
       center: Offset(cam.x, cam.y),
@@ -1378,11 +1846,29 @@ class RoyaleGame extends FlameGame {
 
     canvas.restore();
 
+    _drawAtmosphere(canvas); // drifting dust between the camera and the world
     _drawHitIndicators(canvas); // screen-space arcs pointing at attackers
     _drawHitMarker(canvas);
     _drawGasVignette(canvas);
     _drawLowHp(canvas);
     _drawKillFeed(canvas);
+  }
+
+  /// A thin layer of dust motes drifting between the camera and the world.
+  /// Costs almost nothing and does more for "this looks like a real place"
+  /// than any amount of extra ground texture.
+  void _drawAtmosphere(Canvas canvas) {
+    if (!Profile.instance.gfx.weather || size.x <= 0) return;
+    final n = (34 * Profile.instance.gfx.detail).round().clamp(8, 60);
+    for (var i = 0; i < n; i++) {
+      final seed = i * 37.0;
+      final speed = 12 + (i % 5) * 7;
+      final x = ((seed * 13.7 + _time * speed) % (size.x + 60)) - 30;
+      final y = ((seed * 29.3 + _time * (speed * 1.6)) % (size.y + 60)) - 30;
+      final s = 0.9 + (i % 3) * 0.7;
+      canvas.drawCircle(Offset(x, y), s,
+          _fill..color = const Color(0xFFFFFFFF).withValues(alpha: 0.055));
+    }
   }
 
   void _drawGasVignette(Canvas canvas) {
@@ -1405,10 +1891,17 @@ class RoyaleGame extends FlameGame {
 
   void _drawKillFeed(Canvas canvas) {
     if (_killLog.isEmpty || size.x <= 0) return;
-    var y = 155.0;
+    // Portrait: top-right under the minimap. Landscape: top-LEFT, because the
+    // right side of a short screen is already carrying the minimap and the
+    // action buttons.
+    final landscape = size.x > size.y;
+    var y = landscape ? size.y * 0.22 : 155.0;
     for (var i = _killLog.length - 1; i >= 0; i--) {
       final k = _killLog[i];
-      k.painter.paint(canvas, Offset(size.x - 14 - k.painter.width, y));
+      final x = landscape
+          ? 16.0 + safeLeft
+          : size.x - 14 - safeRight - k.painter.width;
+      k.painter.paint(canvas, Offset(x, y));
       y += 20;
     }
   }
@@ -1481,10 +1974,118 @@ class RoyaleGame extends FlameGame {
     }
   }
 
+  /// Stable pseudo-random value for a world cell. Deterministic, so ground
+  /// detail sits still as the camera moves instead of crawling.
+  static double _hash(int x, int y) {
+    var h = x * 374761393 + y * 668265263;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return ((h ^ (h >> 16)) & 0xFFFF) / 65535.0;
+  }
+
   void _drawGround(Canvas canvas) {
-    canvas.drawRect(Rect.fromLTWH(0, 0, worldSize, worldSize), _groundPaint);
-    const gap = 120.0;
+    canvas.drawRect(_viewRect, _groundPaint);
     final vr = _viewRect;
+    final theme = mapTheme.name;
+
+    // ---- surface detail: only the cells actually on screen ----
+    // Bigger cells = fewer draw calls. The graphics setting scales this, which
+    // is the single most effective lever for a smooth frame rate.
+    final cell = 150.0 / Profile.instance.gfx.detail.clamp(0.3, 1.4);
+    final x0 = (vr.left / cell).floor(), x1 = (vr.right / cell).ceil();
+    final y0 = (vr.top / cell).floor(), y1 = (vr.bottom / cell).ceil();
+    for (var gx = x0; gx <= x1; gx++) {
+      for (var gy = y0; gy <= y1; gy++) {
+        final h = _hash(gx, gy);
+        final cx = gx * cell + h * cell;
+        final cy = gy * cell + _hash(gy, gx) * cell;
+        final c = Offset(cx, cy);
+        switch (theme) {
+          case 'FOREST':
+            // grass tufts + leaf litter
+            if (h < 0.55) {
+              _fill.color = const Color(0x1433682C);
+              canvas.drawOval(
+                  Rect.fromCenter(
+                      center: c, width: 90 + h * 120, height: 60 + h * 60),
+                  _fill);
+            }
+            for (var i = 0; i < 4; i++) {
+              final s = _hash(gx * 5 + i, gy * 11 + i);
+              final p = Offset(gx * cell + s * cell,
+                  gy * cell + _hash(gy * 3 + i, gx) * cell);
+              _stroke
+                ..color = const Color(0x3358A03C)
+                ..strokeWidth = 1.6;
+              canvas.drawLine(p, p.translate(-2 + s * 4, -7 - s * 5), _stroke);
+            }
+            break;
+          case 'BADLANDS':
+            // wind ripples + cracked earth
+            _stroke
+              ..color = const Color(0x1AE0C08A)
+              ..strokeWidth = 2;
+            canvas.drawArc(
+                Rect.fromCenter(center: c, width: 150 + h * 90, height: 46),
+                0.2,
+                2.6,
+                false,
+                _stroke);
+            if (h > 0.7) {
+              _stroke
+                ..color = const Color(0x33000000)
+                ..strokeWidth = 1.4;
+              canvas.drawLine(c, c.translate(28 + h * 40, 14 - h * 26), _stroke);
+            }
+            break;
+          case 'URBAN':
+            // asphalt patches + faded road paint
+            _fill.color = const Color(0x29000000);
+            canvas.drawRect(
+                Rect.fromCenter(
+                    center: c, width: 120 + h * 110, height: 70 + h * 50),
+                _fill);
+            if (h > 0.66) {
+              _fill.color = const Color(0x22FFE08A);
+              canvas.drawRect(
+                  Rect.fromCenter(center: c, width: 46, height: 5), _fill);
+            }
+            break;
+          default: // COMPOUND — poured concrete slabs
+            _stroke
+              ..color = const Color(0x2E000000)
+              ..strokeWidth = 2;
+            canvas.drawRect(
+                Rect.fromLTWH(gx * cell, gy * cell, cell, cell), _stroke);
+            _fill.color = const Color(0x05FFFFFF);
+            canvas.drawRect(
+                Rect.fromCenter(center: c, width: 80 + h * 60, height: 50),
+                _fill);
+        }
+        // universal gravel so nothing looks like flat paper
+        for (var i = 0; i < 3; i++) {
+          final s = _hash(gx * 7 + i, gy * 13 - i);
+          canvas.drawCircle(
+              Offset(gx * cell + s * cell, gy * cell + _hash(gy + i, gx) * cell),
+              1 + s * 1.8,
+              _fill..color = const Color(0x0AFFFFFF));
+        }
+      }
+    }
+
+    // ---- permanent battle damage (blood, scorch, bullet scars) ----
+    for (final d in _decals) {
+      if (!_vis(d.pos.x, d.pos.y, 40)) continue;
+      canvas.save();
+      canvas.translate(d.pos.x, d.pos.y);
+      canvas.rotate(d.rot);
+      canvas.drawOval(
+          Rect.fromCenter(center: Offset.zero, width: d.rx, height: d.ry),
+          _fill..color = d.color);
+      canvas.restore();
+    }
+
+    // faint survey grid keeps a sense of scale and speed
+    const gap = 120.0;
     for (var x = (vr.left ~/ gap) * gap; x < vr.right; x += gap) {
       canvas.drawLine(Offset(x, vr.top), Offset(x, vr.bottom), _gridPaint);
     }
@@ -1504,12 +2105,13 @@ class RoyaleGame extends FlameGame {
       if (bushes) {
         final c = r.center;
         final rad = r.width / 2;
+        // long soft shadow, cast the same way as every other object
         canvas.drawOval(
             Rect.fromCenter(
-                center: c.translate(4, 7), width: rad * 2.1, height: rad * 1.5),
-            _fill..color = const Color(0x44000000));
+                center: c.translate(7, 11), width: rad * 2.2, height: rad * 1.5),
+            _fill..color = const Color(0x55000000));
         if (theme == 'FOREST') {
-          // proper tree: trunk + layered canopy
+          // proper tree: trunk, three canopy layers, sun-lit crown
           canvas.drawRRect(
               RRect.fromRectAndRadius(
                   Rect.fromCenter(
@@ -1519,16 +2121,97 @@ class RoyaleGame extends FlameGame {
                   Radius.circular(rad * 0.12)),
               _fill..color = const Color(0xFF4A3320));
           canvas.drawCircle(c.translate(0, -rad * 0.2), rad * 1.05,
-              _fill..color = const Color(0xFF123E1D));
-          canvas.drawCircle(c.translate(0, -rad * 0.2), rad * 0.8,
+              _fill..color = const Color(0xFF0E3418));
+          canvas.drawCircle(c.translate(-rad * 0.08, -rad * 0.3), rad * 0.84,
               _fill..color = const Color(0xFF1E6B32));
-          canvas.drawCircle(c.translate(-rad * 0.3, -rad * 0.5), rad * 0.4,
-              _fill..color = const Color(0x882FB85A));
+          canvas.drawCircle(c.translate(-rad * 0.28, -rad * 0.48), rad * 0.46,
+              _fill..color = const Color(0xAA3ECC66));
+          canvas.drawCircle(c.translate(-rad * 0.4, -rad * 0.6), rad * 0.2,
+              _fill..color = const Color(0x88A8F08A));
         } else {
-          canvas.drawCircle(c, rad, _fill..color = const Color(0x77123F1E));
-          canvas.drawCircle(c, rad * 0.78, _fill..color = const Color(0xDD1F6B34));
+          canvas.drawCircle(c, rad, _fill..color = const Color(0x88102F16));
+          canvas.drawCircle(c.translate(-rad * 0.06, -rad * 0.08), rad * 0.78,
+              _fill..color = const Color(0xE01F6B34));
           canvas.drawCircle(c.translate(-rad * 0.25, -rad * 0.28), rad * 0.42,
-              _fill..color = const Color(0x552FB85A));
+              _fill..color = const Color(0x772FB85A));
+          canvas.drawCircle(c.translate(-rad * 0.36, -rad * 0.4), rad * 0.18,
+              _fill..color = const Color(0x66A8F08A));
+        }
+        continue;
+      }
+
+      // ---- deployed shield wall: frosted energy slab that cracks ----
+      if (o.isShield) {
+        final health = (o.hp / kShieldWallHp).clamp(0.0, 1.0);
+        final fade = (o.life / 2.0).clamp(0.0, 1.0); // fades out at the end
+        final rr = RRect.fromRectAndRadius(r, const Radius.circular(5));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(r.translate(6, 9), const Radius.circular(5)),
+            _fill..color = const Color(0x44000000));
+        canvas.drawRRect(
+            rr,
+            _fill
+              ..color = const Color(0xFF7FE8FF)
+                  .withValues(alpha: (0.22 + 0.18 * health) * fade));
+        canvas.drawRRect(
+            rr,
+            _stroke
+              ..color = const Color(0xFFBFF4FF)
+                  .withValues(alpha: (0.55 + 0.35 * health) * fade)
+              ..strokeWidth = 2.5);
+        // Hex lattice + a lit energy core seam — reads as tech, not a blue box.
+        final long = r.width > r.height;
+        final n = ((long ? r.width : r.height) / 22).floor();
+        _stroke
+          ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.16 * fade)
+          ..strokeWidth = 1.3;
+        for (var i = 1; i < n; i++) {
+          final t = i / n;
+          if (long) {
+            final x = r.left + r.width * t;
+            canvas.drawLine(Offset(x, r.top + 3), Offset(x, r.bottom - 3), _stroke);
+            // chevron bracing between the ribs
+            canvas.drawLine(Offset(x - r.width / n * 0.5, r.top + 3),
+                Offset(x, r.center.dy), _stroke);
+            canvas.drawLine(Offset(x - r.width / n * 0.5, r.bottom - 3),
+                Offset(x, r.center.dy), _stroke);
+          } else {
+            final y = r.top + r.height * t;
+            canvas.drawLine(Offset(r.left + 3, y), Offset(r.right - 3, y), _stroke);
+            canvas.drawLine(Offset(r.left + 3, y - r.height / n * 0.5),
+                Offset(r.center.dx, y), _stroke);
+            canvas.drawLine(Offset(r.right - 3, y - r.height / n * 0.5),
+                Offset(r.center.dx, y), _stroke);
+          }
+        }
+        // glowing spine down the middle, brighter while the wall is healthy
+        final core = long
+            ? Rect.fromLTRB(r.left + 2, r.center.dy - 2, r.right - 2, r.center.dy + 2)
+            : Rect.fromLTRB(r.center.dx - 2, r.top + 2, r.center.dx + 2, r.bottom - 2);
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(core, const Radius.circular(2)),
+            _fill
+              ..color = const Color(0xFFEAFBFF)
+                  .withValues(alpha: (0.35 + 0.45 * health) * fade));
+        // emitter caps at both ends
+        for (final e in long
+            ? [Offset(r.left + 5, r.center.dy), Offset(r.right - 5, r.center.dy)]
+            : [Offset(r.center.dx, r.top + 5), Offset(r.center.dx, r.bottom - 5)]) {
+          canvas.drawCircle(e, 4.5,
+              _fill..color = const Color(0xFF2A6B7F).withValues(alpha: fade));
+          canvas.drawCircle(e, 2.2,
+              _fill..color = const Color(0xFFDFF8FF).withValues(alpha: fade));
+        }
+        if (health < 0.75) {
+          _stroke
+            ..color = const Color(0xFF0A2A33).withValues(alpha: 0.7 * fade)
+            ..strokeWidth = 2;
+          final cracks = ((1 - health) * 6).round();
+          for (var i = 0; i < cracks; i++) {
+            final s = _hash(o.x.round() + i, o.y.round() - i);
+            final p1 = Offset(r.left + r.width * s, r.top + r.height * (1 - s));
+            canvas.drawLine(p1, p1.translate(-9 + s * 20, 8 - s * 18), _stroke);
+          }
         }
         continue;
       }
@@ -1582,32 +2265,66 @@ class RoyaleGame extends FlameGame {
             : const Color(0xFF493420);
       }
 
-      canvas.drawRRect(RRect.fromRectAndRadius(r.translate(7, 9), radius),
-          _fill..color = const Color(0x55000000));
+      // Contact shadow first, always cast the same way (light sits top-left)
+      // so the whole map reads as one lit scene.
+      canvas.drawRRect(RRect.fromRectAndRadius(r.translate(8, 11), radius),
+          _fill..color = const Color(0x66000000));
       final body = Rect.fromLTRB(r.left, r.top - h, r.right, r.bottom);
       canvas.drawRRect(
           RRect.fromRectAndRadius(body, radius), _fill..color = sideColor);
+      // vertical shading on the extruded face
+      canvas.drawRect(
+          Rect.fromLTRB(r.left, r.bottom - h * 0.5, r.right, r.bottom),
+          _fill..color = const Color(0x33000000));
       final top = r.translate(0, -h);
       canvas.drawRRect(
           RRect.fromRectAndRadius(top, radius), _fill..color = topColor);
+      // lit north edge + shaded south edge
       canvas.drawRect(Rect.fromLTWH(top.left + 2, top.top + 2, top.width - 4, 3),
-          _fill..color = const Color(0x3AFFFFFF));
+          _fill..color = const Color(0x4DFFFFFF));
+      canvas.drawRect(
+          Rect.fromLTWH(top.left + 2, top.bottom - 5, top.width - 4, 3),
+          _fill..color = const Color(0x33000000));
 
       if (wall && theme == 'URBAN') {
-        // lit windows on the building rooftops
+        // rooftop plant: AC vents + lit windows, so a block reads as a building
+        _fill.color = const Color(0x44000000);
+        for (var wx = top.left + 7; wx < top.right - 12; wx += 26) {
+          canvas.drawRect(Rect.fromLTWH(wx, top.top + 7, 11, 7), _fill);
+        }
         _fill.color = const Color(0x66FFE9A8);
-        for (var wx = top.left + 6; wx < top.right - 6; wx += 12) {
-          for (var wy = top.top + 6; wy < top.bottom - 6; wy += 12) {
+        for (var wx = top.left + 8; wx < top.right - 8; wx += 14) {
+          for (var wy = top.top + 18; wy < top.bottom - 7; wy += 14) {
+            if (_hash(wx.round(), wy.round()) < 0.4) continue; // dark flats
             canvas.drawRect(Rect.fromLTWH(wx, wy, 5, 5), _fill);
           }
         }
-      } else if (!wall) {
+      } else if (wall) {
+        // concrete / timber panel seams
+        _stroke
+          ..color = const Color(0x33000000)
+          ..strokeWidth = 1.6;
+        for (var wx = top.left + 18; wx < top.right - 6; wx += 24) {
+          canvas.drawLine(
+              Offset(wx, top.top + 3), Offset(wx, top.bottom - 3), _stroke);
+        }
+      } else {
         canvas.drawRRect(
             RRect.fromRectAndRadius(top.deflate(3), const Radius.circular(3)),
             _stroke
               ..color = const Color(0x55FFCF9E)
               ..strokeWidth = 2);
+        _stroke
+          ..color = const Color(0x44000000)
+          ..strokeWidth = 1.4;
+        canvas.drawLine(Offset(top.left + 3, top.center.dy),
+            Offset(top.right - 3, top.center.dy), _stroke);
       }
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(top, radius),
+          _stroke
+            ..color = const Color(0x55000000)
+            ..strokeWidth = 1.5);
     }
   }
 
@@ -1638,20 +2355,89 @@ class RoyaleGame extends FlameGame {
             _stroke..color = const Color(0xFF7FCF6A)..strokeWidth = 1.5);
         canvas.drawRect(Rect.fromCenter(center: c.translate(0, -8), width: 5, height: 4),
             _fill..color = const Color(0xFF9AA6B2));
+      } else if (l.kind == LootKind.vest) {
+        // body armour: plate carrier with shoulder straps
+        canvas.drawCircle(c, 15,
+            _fill..color = const Color(0xFF4FA3FF).withValues(alpha: 0.2 * pulse));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: c, width: 19, height: 22),
+                const Radius.circular(5)),
+            _fill..color = const Color(0xFF2E4460));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: c, width: 19, height: 22),
+                const Radius.circular(5)),
+            _stroke..color = const Color(0xFF7FC4FF)..strokeWidth = 1.6);
+        canvas.drawRect(Rect.fromCenter(center: c, width: 7, height: 16),
+            _fill..color = const Color(0xFF4B6C93));
+      } else if (l.kind == LootKind.helmet) {
+        canvas.drawCircle(c, 15,
+            _fill..color = const Color(0xFFFFC24B).withValues(alpha: 0.2 * pulse));
+        canvas.drawArc(
+            Rect.fromCenter(center: c.translate(0, 2), width: 22, height: 22),
+            math.pi,
+            math.pi,
+            true,
+            _fill..color = const Color(0xFF5A6250));
+        canvas.drawArc(
+            Rect.fromCenter(center: c.translate(0, 2), width: 22, height: 22),
+            math.pi,
+            math.pi,
+            false,
+            _stroke..color = const Color(0xFFC9D6A8)..strokeWidth = 1.8);
+        canvas.drawRect(Rect.fromCenter(center: c.translate(0, 3), width: 22, height: 3),
+            _fill..color = const Color(0xFF39402F));
+      } else if (l.kind == LootKind.wall) {
+        // shield-wall charge: a folded slab of energy
+        canvas.drawCircle(c, 15,
+            _fill..color = const Color(0xFF7FE8FF).withValues(alpha: 0.2 * pulse));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: c, width: 24, height: 15),
+                const Radius.circular(3)),
+            _fill..color = const Color(0x667FE8FF));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: c, width: 24, height: 15),
+                const Radius.circular(3)),
+            _stroke..color = const Color(0xFFBFF4FF)..strokeWidth = 1.6);
+        _stroke.strokeWidth = 1.2;
+        canvas.drawLine(c.translate(-4, -7), c.translate(-4, 7), _stroke);
+        canvas.drawLine(c.translate(4, -7), c.translate(4, 7), _stroke);
       } else {
         final wc = kWeapons[l.weapon]!.color;
-        canvas.drawCircle(
-            c, 15, _fill..color = wc.withValues(alpha: 0.22 * pulse));
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(center: c.translate(0, -1), width: 20, height: 6),
-                const Radius.circular(2)),
-            _fill..color = wc);
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromLTWH(c.dx - 4, c.dy + 1, 6, 8),
-                const Radius.circular(2)),
-            _fill..color = wc);
+        if (l.airdrop) {
+          // supply crate: a lit pad + a stencilled box you can spot from range
+          final beat = 0.5 + 0.5 * math.sin(_time * 4);
+          canvas.drawCircle(c, 34,
+              _fill..color = kAccent.withValues(alpha: 0.10 + 0.10 * beat));
+          canvas.drawCircle(c, 24 + 4 * beat,
+              _stroke..color = kAccent.withValues(alpha: 0.7)..strokeWidth = 2);
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: c, width: 34, height: 28),
+                  const Radius.circular(4)),
+              _fill..color = const Color(0xFF2A2F1E));
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: c, width: 34, height: 28),
+                  const Radius.circular(4)),
+              _stroke..color = kAccent..strokeWidth = 2);
+          canvas.drawRect(Rect.fromCenter(center: c, width: 34, height: 5),
+              _fill..color = kAccent.withValues(alpha: 0.85));
+        } else {
+          canvas.drawCircle(
+              c, 15, _fill..color = wc.withValues(alpha: 0.22 * pulse));
+        }
+        // the actual gun, so you know what you're standing on
+        drawGunIcon(canvas, c.translate(0, l.airdrop ? 1 : 0),
+            l.airdrop ? 26 : 26, l.weapon!,
+            fill: _fill, stroke: _stroke);
+        if (!l.airdrop) {
+          canvas.drawRect(Rect.fromCenter(center: c.translate(0, 9), width: 22, height: 2),
+              _fill..color = wc.withValues(alpha: 0.75));
+        }
       }
     }
   }
@@ -1729,13 +2515,19 @@ class RoyaleGame extends FlameGame {
       final pos = Offset(c.pos.x, c.pos.y);
       final r = c.radius;
 
-      // ground shadow
+      // grounded shadow — offset down-right like every other shadow on the map
       canvas.drawOval(
           Rect.fromCenter(
-              center: pos.translate(3, r * 0.6),
-              width: r * 2.0,
-              height: r * 0.85),
-          _fill..color = const Color(0x44000000));
+              center: pos.translate(6, r * 0.7),
+              width: r * 2.25,
+              height: r * 0.95),
+          _fill..color = const Color(0x4D000000));
+      canvas.drawOval(
+          Rect.fromCenter(
+              center: pos.translate(3, r * 0.5),
+              width: r * 1.5,
+              height: r * 0.6),
+          _fill..color = const Color(0x3D000000));
 
       // player ground ring
       if (c == player) {
@@ -1752,7 +2544,13 @@ class RoyaleGame extends FlameGame {
       final walk = moving ? math.sin(_time * 11 + c.id * 1.7) : 0.0;
       drawOperator(canvas, pos, r, c.aim, moveAim, c.color, c.skin, c.accessory,
           c.weaponId,
-          fill: _fill, stroke: _stroke, walk: walk, hero: c.hero);
+          fill: _fill,
+          stroke: _stroke,
+          walk: walk,
+          hero: c.hero,
+          vest: c.vest > 0,
+          helmet: c.helmet > 0,
+          armourFlash: (c.armourFlash / 0.12).clamp(0.0, 1.0));
 
       if (c.shieldT > 0) {
         canvas.drawCircle(
@@ -1773,9 +2571,26 @@ class RoyaleGame extends FlameGame {
       }
 
       if (c.muzzle > 0) {
-        final tip = c.pos + fromAngle(c.aim) * (r * 2.2);
-        canvas.drawCircle(Offset(tip.x, tip.y), 9 * (c.muzzle / 0.06),
-            _fill..color = const Color(0xFFFFE9A8).withValues(alpha: 0.85));
+        // A proper flash: a hot star at the muzzle plus a short cone of light
+        // thrown forward, instead of a flat white dot.
+        final k = (c.muzzle / 0.06).clamp(0.0, 1.0);
+        final tip = c.pos + fromAngle(c.aim) * (r * 2.15);
+        final o = Offset(tip.x, tip.y);
+        canvas.drawCircle(o, 20 * k,
+            _fill..color = const Color(0xFFFFC24B).withValues(alpha: 0.22 * k));
+        final cone = Path()
+          ..moveTo(o.dx, o.dy)
+          ..lineTo(o.dx + math.cos(c.aim + 0.42) * 34 * k,
+              o.dy + math.sin(c.aim + 0.42) * 34 * k)
+          ..lineTo(o.dx + math.cos(c.aim) * 46 * k,
+              o.dy + math.sin(c.aim) * 46 * k)
+          ..lineTo(o.dx + math.cos(c.aim - 0.42) * 34 * k,
+              o.dy + math.sin(c.aim - 0.42) * 34 * k)
+          ..close();
+        canvas.drawPath(cone,
+            _fill..color = const Color(0xFFFFE9A8).withValues(alpha: 0.5 * k));
+        canvas.drawCircle(o, 7 * k,
+            _fill..color = const Color(0xFFFFFDF0).withValues(alpha: 0.95 * k));
       }
 
       final label = _nameLabels[c.id];
@@ -1802,10 +2617,28 @@ class RoyaleGame extends FlameGame {
 
   void _drawParticles(Canvas canvas) {
     for (final p in particles) {
-      if (!_vis(p.pos.x, p.pos.y, 20)) continue;
+      if (!_vis(p.pos.x, p.pos.y, 24)) continue;
       final a = (p.life / p.maxLife).clamp(0.0, 1.0);
-      canvas.drawCircle(Offset(p.pos.x, p.pos.y), p.size * a,
-          _fill..color = p.color.withValues(alpha: a));
+      final o = Offset(p.pos.x, p.pos.y);
+      if (p.glow) {
+        // soft bloom under the spark so embers actually look hot
+        canvas.drawCircle(o, p.size * a * 2.6,
+            _fill..color = p.color.withValues(alpha: a * 0.22));
+      }
+      canvas.drawCircle(
+          o, p.size * a, _fill..color = p.color.withValues(alpha: a));
+    }
+    // expanding blast rings
+    for (final s in _shocks) {
+      if (!_vis(s.pos.x, s.pos.y, s.maxR)) continue;
+      final t = (s.t / s.life).clamp(0.0, 1.0);
+      final r = s.maxR * _easeOut(t);
+      canvas.drawCircle(
+          Offset(s.pos.x, s.pos.y),
+          r,
+          _stroke
+            ..color = const Color(0xFFFFD9A0).withValues(alpha: (1 - t) * 0.75)
+            ..strokeWidth = 7 * (1 - t) + 1);
     }
   }
 
@@ -1813,17 +2646,44 @@ class RoyaleGame extends FlameGame {
     final vr = _viewRect;
     final center = Offset(zoneCenter.x, zoneCenter.y);
 
-    // tint everything outside the safe circle (single offscreen layer per frame)
-    canvas.saveLayer(vr, _layerPaint);
-    canvas.drawRect(vr, _gasFillPaint);
-    canvas.drawCircle(center, zoneRadius, _clearPaint);
-    canvas.restore();
+    // Tint everything outside the safe circle. This used to be a saveLayer +
+    // BlendMode.clear — an offscreen render target every single frame, which
+    // is one of the most expensive things you can ask a mobile GPU for and was
+    // a real source of stutter. An even-odd path does the same job for free.
+    _gasPath
+      ..reset()
+      ..addRect(vr.inflate(60))
+      ..addOval(Rect.fromCircle(center: center, radius: zoneRadius))
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(_gasPath, _gasFillPaint);
+
+    // Boiling gas right at the wall: a few drifting blobs so the barrier reads
+    // as moving vapour rather than a flat purple filter.
+    final drift = _time * 0.35;
+    for (var i = 0; i < 22; i++) {
+      final a = i * (kTau / 22) + drift * (i.isEven ? 1 : -1);
+      final rr = zoneRadius + 26 + math.sin(_time * 1.7 + i) * 18;
+      final p = Offset(center.dx + math.cos(a) * rr, center.dy + math.sin(a) * rr);
+      if (!_vis(p.dx, p.dy, 90)) continue;
+      canvas.drawCircle(p, 46 + math.sin(_time * 2 + i * 1.3) * 12,
+          _fill..color = kGasEdge.withValues(alpha: 0.10));
+    }
 
     // safe edge: a soft translucent ring + a crisp line (no blur)
     canvas.drawCircle(center, zoneRadius,
         _stroke..color = kSafeEdge.withValues(alpha: 0.3)..strokeWidth = 8);
     canvas.drawCircle(center, zoneRadius,
         _stroke..color = kSafeEdge..strokeWidth = 2.5);
+    // pulsing inner lip so the boundary is unmistakable while it closes
+    if (zoneShrinking) {
+      final pulse = 0.5 + 0.5 * math.sin(_time * 4);
+      canvas.drawCircle(
+          center,
+          zoneRadius - 6,
+          _stroke
+            ..color = kGasEdge.withValues(alpha: 0.25 + 0.35 * pulse)
+            ..strokeWidth = 3);
+    }
 
     final phase = kZonePhases[zonePhase.clamp(0, kZonePhases.length - 1)];
     final targetC =
@@ -1832,6 +2692,26 @@ class RoyaleGame extends FlameGame {
     canvas.drawCircle(targetC, targetR,
         _stroke..color = const Color(0x88FFFFFF)..strokeWidth = 2);
   }
+}
+
+/// Quadratic ease-out — blast rings shoot out fast then settle.
+double _easeOut(double t) => 1 - (1 - t) * (1 - t);
+
+/// A permanent mark painted onto the ground (blood, scorch, bullet scar).
+class _Decal {
+  final Vector2 pos;
+  final double rx, ry, rot;
+  final Color color;
+  _Decal(this.pos, this.rx, this.ry, this.rot, this.color);
+}
+
+/// An expanding blast ring.
+class _Shock {
+  final Vector2 pos;
+  double t = 0;
+  final double life;
+  final double maxR;
+  _Shock(this.pos, this.maxR, this.life);
 }
 
 /// A fading on-screen indicator pointing toward where damage came from.

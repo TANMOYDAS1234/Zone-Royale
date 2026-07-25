@@ -1,18 +1,16 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui show Gradient;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../game/char_art.dart';
 import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/royale_game.dart';
 import '../ui/capture.dart';
-import '../ui/game_ui.dart' show Joystick;
+import '../ui/game_ui.dart' show Joystick, menuPad;
 import 'net_client.dart';
 
 /// Full-screen multiplayer flow: a connect form (server address + room code),
@@ -92,28 +90,22 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
 
   Map<String, dynamic> _buildConfig() {
     final mode = kMatchModes[_sizeSel];
-    final w = _weaponSel < 0 ? null : kWeapons[kWeaponOrder[_weaponSel]];
-    final startId = _weaponSel < 0 ? WeaponId.smg : kWeaponOrder[_weaponSel];
+    // Forced-weapon rooms: everyone starts with (and keeps) that exact gun.
+    // ALL_ARMS: you keep your own loadout and loot can add a second.
+    final startId = _weaponSel < 0
+        ? Profile.instance.startWeapon
+        : kWeaponOrder[_weaponSel];
     return {
       'world': mode.world,
       'maxPlayers': mode.players,
       'map': _mapName,
       'weapon': _weaponName,
-      if (w != null) 'dmg': w.damage,
-      if (w != null) 'bulletSpeed': w.bulletSpeed,
-      if (w != null) 'bulletRange': w.range,
       'rounds': (_bo / 2).ceil(), // wins needed: BO1=1, BO3=2, BO5=3
       'startWi': startId.index,
-      // full gun table so the server can drop real weapon loot
-      'weapons': [
-        for (final id in kWeaponOrder)
-          {
-            'i': id.index,
-            'dmg': kWeapons[id]!.damage,
-            'speed': kWeapons[id]!.bulletSpeed,
-            'range': kWeapons[id]!.range,
-          }
-      ],
+      // The FULL weapon table — fire rate, magazine, reload, spread, pellets
+      // and auto/semi included — so an online gun behaves exactly like the
+      // offline one instead of "one bullet per tap".
+      'weapons': weaponNetTable(),
       'medkit': _medkit,
       'grenades': _grenades,
       'skills': _skills,
@@ -179,18 +171,20 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     final c = _client;
     return Scaffold(
       backgroundColor: const Color(0xFF05070C),
-      body: SafeArea(
-        child: c == null
-            ? _configView()
-            : AnimatedBuilder(
-                animation: c.rev,
-                builder: (_, _) => c.status != 'live'
-                    ? _statusView(c)
-                    : (_deployed
-                        ? _ArenaView(client: c, onLeave: _leave)
-                        : _lobbyView(c)),
-              ),
-      ),
+      // Menus sit inside the safe area; the ARENA does not. Wrapping the arena
+      // in a SafeArea shrank the canvas and — because a Stack clips — cut the
+      // joysticks and action buttons off at the inset. The arena is full-bleed
+      // and insets its own controls instead.
+      body: c == null
+          ? SafeArea(child: _configView())
+          : AnimatedBuilder(
+              animation: c.rev,
+              builder: (_, _) => c.status != 'live'
+                  ? SafeArea(child: _statusView(c))
+                  : (_deployed
+                      ? _ArenaView(client: c, onLeave: _leave)
+                      : SafeArea(child: _lobbyView(c))),
+            ),
     );
   }
 
@@ -322,7 +316,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
             _header(),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
+                padding: menuPad(context, top: 14, bottom: 18, side: 18),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -361,6 +355,20 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
     );
   }
 
+  /// When the settings card is shown inside a pushed route (the host's
+  /// CHANGE SETTINGS sheet), taps have to rebuild THAT subtree as well as this
+  /// screen — otherwise the chips look frozen even though the value changed.
+  StateSetter? _innerSet;
+  void _apply(VoidCallback fn) {
+    setState(fn);
+    _innerSet?.call(() {});
+  }
+
+  Widget _configCardLive(StateSetter s) {
+    _innerSet = s;
+    return _configCard();
+  }
+
   Widget _configCard() {
     final mode = kMatchModes[_sizeSel];
     return Container(
@@ -374,32 +382,43 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _fieldLabel('Map & Sector'),
-          _dropField(Icons.map_rounded, '$_mapName · Sector ${_mapSel + 1}',
-              () => setState(() =>
+          _dropField(Icons.map_rounded, _mapName,
+              () => _apply(() =>
                   _mapSel = (_mapSel + 1) % (kMapThemes.length + 1))),
           const SizedBox(height: 6),
           _sectionLine('Match Rules'),
           _fieldLabel('Weapon Type'),
           _dropField(Icons.gps_fixed, _weaponName, () {
-            setState(() => _weaponSel = _weaponSel >= kWeaponOrder.length - 1
+            _apply(() => _weaponSel = _weaponSel >= kWeaponOrder.length - 1
                 ? -1
                 : _weaponSel + 1);
           }),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+                _weaponSel < 0
+                    ? 'ALL_ARMS — everyone brings their own loadout, crates drop guns.'
+                    : 'Everyone fights with the $_weaponName only. No weapon crates.',
+                style: TextStyle(
+                    fontFamily: _mono,
+                    color: Colors.white.withValues(alpha: 0.35),
+                    fontSize: 10)),
+          ),
           const SizedBox(height: 14),
           _fieldLabel('Rounds'),
           _pillGroup(const ['BO1', 'BO3', 'BO5'], const [1, 3, 5], _bo,
-              (v) => setState(() => _bo = v)),
+              (v) => _apply(() => _bo = v)),
           const SizedBox(height: 14),
           _fieldLabel('Player Limit'),
           _pillGroup([
             for (final m in kMatchModes) '${m.players}'
           ], [
             for (var i = 0; i < kMatchModes.length; i++) i
-          ], _sizeSel, (v) => setState(() => _sizeSel = v)),
+          ], _sizeSel, (v) => _apply(() => _sizeSel = v)),
           const SizedBox(height: 14),
           _fieldLabel('Bot Difficulty'),
           _pillGroup(const ['Easy', 'Normal', 'Hard'], const [0, 1, 2], _botDiff,
-              (v) => setState(() => _botDiff = v)),
+              (v) => _apply(() => _botDiff = v)),
           const SizedBox(height: 6),
           _sectionLine('Equipment Restrictions'),
           Wrap(
@@ -407,13 +426,13 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
             runSpacing: 10,
             children: [
               _toggleChip('Medkits', _medkit,
-                  () => setState(() => _medkit = !_medkit)),
+                  () => _apply(() => _medkit = !_medkit)),
               _toggleChip('Grenades', _grenades,
-                  () => setState(() => _grenades = !_grenades)),
+                  () => _apply(() => _grenades = !_grenades)),
               _toggleChip('Hero Skills', _skills,
-                  () => setState(() => _skills = !_skills)),
+                  () => _apply(() => _skills = !_skills)),
               _toggleChip('Fill With Bots', _bots,
-                  () => setState(() => _bots = !_bots)),
+                  () => _apply(() => _bots = !_bots)),
             ],
           ),
           const SizedBox(height: 6),
@@ -438,7 +457,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
             _header(),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+                padding: menuPad(context, top: 10, bottom: 12, side: 18),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -446,6 +465,36 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                         child: _titles(
                             'Room ${c.roomCode.isEmpty ? _room.text : c.roomCode}',
                             _wasQuick ? 'Quick Match' : 'Briefing Room')),
+                    if (c.serverOutdated) ...[
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: kAccent2.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: kAccent2),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.sync_problem,
+                                color: kAccent2, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                  'This server is running an older build. Redeploy '
+                                  'the server (push to GitHub → Render rebuilds) '
+                                  'to play online with this version.',
+                                  style: TextStyle(
+                                      fontFamily: _mono,
+                                      color: Colors.white
+                                          .withValues(alpha: 0.75),
+                                      fontSize: 11,
+                                      height: 1.4)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 18),
                     _summaryCard(c),
                     const SizedBox(height: 18),
@@ -493,6 +542,46 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
                 children: [
                   _bigButton(Icons.rocket_launch, 'START MISSION', _startMission),
                   const SizedBox(height: 10),
+                  // The host owns the rules, so they can retune the room right
+                  // here and have it take effect — no leave-and-rejoin dance.
+                  if (c.isHost && !c.started) ...[
+                    _ghostButton(Icons.tune, 'CHANGE / APPLY SETTINGS', () {
+                      Navigator.of(context)
+                          .push(MaterialPageRoute<void>(
+                              builder: (_) => Scaffold(
+                                    backgroundColor: const Color(0xFF05070C),
+                                    body: SafeArea(
+                                      child: Column(
+                                        children: [
+                                          _header(),
+                                          Expanded(
+                                            child: SingleChildScrollView(
+                                              padding:
+                                                  const EdgeInsets.all(18),
+                                              child: StatefulBuilder(
+                                                builder: (_, setInner) =>
+                                                    _configCardLive(setInner),
+                                              ),
+                                            ),
+                                          ),
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.all(16),
+                                            child: _bigButton(Icons.check,
+                                                'APPLY TO ROOM', () {
+                                              _client
+                                                  ?.sendConfig(_buildConfig());
+                                              Navigator.of(context).maybePop();
+                                            }),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  )))
+                          .then((_) => setState(() {}));
+                    }),
+                    const SizedBox(height: 10),
+                  ],
                   Row(
                     children: [
                       Expanded(
@@ -991,15 +1080,15 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
         child: Row(
           children: [
             // OPERATIONS = this live-play terminal (current)
-            item(Icons.track_changes, 'OPERATIONS', true, null),
+            item(Icons.public, 'ONLINE', true, null),
             // ARMORY = the Shop (guns / skins / gear)
-            item(Icons.military_tech, 'ARMORY', false,
+            item(Icons.shopping_cart, 'SHOP', false,
                 () => _goto(Screen.shop)),
             // FACTION = your operator identity / loadout
-            item(Icons.groups, 'FACTION', false,
+            item(Icons.person, 'PROFILE', false,
                 () => _goto(Screen.profile)),
             // INTEL = daily missions / objectives
-            item(Icons.storage_rounded, 'INTEL', false,
+            item(Icons.assignment, 'MISSIONS', false,
                 () => _goto(Screen.missions)),
           ],
         ),
@@ -1028,6 +1117,32 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
+/// A bullet the CLIENT flies itself. The server only tells us "a shot was
+/// fired here, with this gun" — every client then simulates the tracer with
+/// the real weapon stats. That's a fraction of the bandwidth of streaming
+/// bullet positions and, because nothing is being interpolated, the rounds
+/// look perfectly smooth even on a 200ms connection.
+class _Tracer {
+  Offset pos;
+  final Offset vel;
+  final double range;
+  final Color color;
+  final double width;
+  double travelled = 0;
+  _Tracer(this.pos, this.vel, this.range, this.color, this.width);
+}
+
+/// A short-lived visual: muzzle flash, impact spark, explosion ember, smoke.
+class _Fx {
+  Offset pos;
+  Offset vel;
+  double life;
+  final double maxLife;
+  final double size;
+  final Color color;
+  _Fx(this.pos, this.vel, this.life, this.size, this.color) : maxLife = life;
+}
+
 /// The live arena: renders the server snapshot and streams input at ~30 Hz.
 class _ArenaView extends StatefulWidget {
   final NetClient client;
@@ -1044,14 +1159,22 @@ class _ArenaViewState extends State<_ArenaView>
   double _aim = 0; // last aim angle
   bool _fire = false;
   bool _nadeQ = false; // one-shot: throw a grenade next input
-  bool _skillQ = false; // one-shot: activate the hero skill next input
+  bool _skillQ = false; // one-shot: activate the hero skill
+  bool _reloadQ = false; // one-shot: reload
+  bool _swapQ = false; // one-shot: switch weapon slots
+  bool _takeQ = false; // one-shot: pick up the crate under our feet
+  bool _wallQ = false; // one-shot: deploy a shield wall
   Timer? _pump;
 
   // ---- client-side prediction (your own operator moves instantly) ----
   double _selfX = 0, _selfY = 0;
   bool _hasSelf = false;
 
-  // ---- per-frame ticker: drives prediction + interpolation at display rate ----
+  // ---- locally simulated effects ----
+  final List<_Tracer> _tracers = [];
+  final List<_Fx> _fx = [];
+
+  // ---- per-frame ticker: drives prediction + interpolation at display rate --
   late final Ticker _ticker;
   final ValueNotifier<int> _frame = ValueNotifier(0);
   Duration _last = Duration.zero;
@@ -1071,10 +1194,19 @@ class _ArenaViewState extends State<_ArenaView>
     super.initState();
     // stream input to the server at a steady rate, independent of frame timing
     _pump = Timer.periodic(const Duration(milliseconds: 33), (_) {
-      widget.client
-          .sendInput(_move.dx, _move.dy, _aim, _fire, nade: _nadeQ, skill: _skillQ);
+      widget.client.sendInput(_move.dx, _move.dy, _aim, _fire,
+          nade: _nadeQ,
+          skill: _skillQ,
+          reload: _reloadQ,
+          swap: _swapQ,
+          take: _takeQ,
+          wall: _wallQ);
       _nadeQ = false;
       _skillQ = false;
+      _reloadQ = false;
+      _swapQ = false;
+      _takeQ = false;
+      _wallQ = false;
     });
     _ticker = createTicker(_onFrame)..start();
   }
@@ -1089,9 +1221,26 @@ class _ArenaViewState extends State<_ArenaView>
 
   bool _blocked(double x, double y) {
     for (final o in widget.client.obstacles) {
-      if ((x - o.x).abs() < o.w / 2 + 20 && (y - o.y).abs() < o.h / 2 + 20) {
+      if (!o.blocks) continue;
+      if ((x - o.x).abs() < o.w / 2 + 18 && (y - o.y).abs() < o.h / 2 + 18) {
         return true;
       }
+    }
+    for (final w in widget.client.walls) {
+      if ((x - w.x).abs() < w.w / 2 + 16 && (y - w.y).abs() < w.h / 2 + 16) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _blocksBullet(double x, double y) {
+    for (final o in widget.client.obstacles) {
+      if (!o.blocks) continue;
+      if ((x - o.x).abs() < o.w / 2 && (y - o.y).abs() < o.h / 2) return true;
+    }
+    for (final w in widget.client.walls) {
+      if ((x - w.x).abs() < w.w / 2 && (y - w.y).abs() < w.h / 2) return true;
     }
     return false;
   }
@@ -1153,7 +1302,105 @@ class _ArenaViewState extends State<_ArenaView>
         }
       }
     }
+
+    _spawnEvents(c);
+    _stepTracers(dt);
+    _stepFx(dt);
     _frame.value++;
+  }
+
+  /// Turns server events (shots / explosions / airdrops) into local visuals.
+  void _spawnEvents(NetClient c) {
+    for (final s in c.shotQueue) {
+      final id = WeaponId.values[s.wi.clamp(0, WeaponId.values.length - 1)];
+      final w = kWeapons[id]!;
+      for (var i = 0; i < w.pellets; i++) {
+        final jitter =
+            (math.Random().nextDouble() * 2 - 1) * w.spread;
+        final a = s.aim + jitter;
+        _tracers.add(_Tracer(
+          Offset(s.x + math.cos(a) * 22, s.y + math.sin(a) * 22),
+          Offset(math.cos(a) * w.bulletSpeed, math.sin(a) * w.bulletSpeed),
+          w.range,
+          w.color,
+          _tracerWidth(id),
+        ));
+      }
+      // muzzle flash + smoke + brass
+      final tip = Offset(s.x + math.cos(s.aim) * 26, s.y + math.sin(s.aim) * 26);
+      for (var i = 0; i < 3; i++) {
+        final a = s.aim + (math.Random().nextDouble() - 0.5) * 0.6;
+        _fx.add(_Fx(tip, Offset(math.cos(a) * 130, math.sin(a) * 130), 0.09, 4,
+            const Color(0xFFFFE9A8)));
+      }
+      _fx.add(_Fx(tip, Offset(math.cos(s.aim) * 30, math.sin(s.aim) * 30), 0.5,
+          5, const Color(0x55909090)));
+    }
+    c.shotQueue.clear();
+
+    for (final b in c.boomQueue) {
+      for (var i = 0; i < 22; i++) {
+        final a = math.Random().nextDouble() * math.pi * 2;
+        final sp = 90 + math.Random().nextDouble() * 300;
+        _fx.add(_Fx(b, Offset(math.cos(a) * sp, math.sin(a) * sp),
+            0.28 + math.Random().nextDouble() * 0.35, 6,
+            i.isEven ? const Color(0xFFFFB020) : const Color(0xFFFF5A2A)));
+      }
+      for (var i = 0; i < 8; i++) {
+        final a = math.Random().nextDouble() * math.pi * 2;
+        _fx.add(_Fx(b, Offset(math.cos(a) * 50, math.sin(a) * 50), 0.9, 12,
+            const Color(0x77555560)));
+      }
+    }
+    c.boomQueue.clear();
+    c.dropQueue.clear();
+  }
+
+  static double _tracerWidth(WeaponId w) {
+    switch (w) {
+      case WeaponId.sniper:
+        return 1.9;
+      case WeaponId.dmr:
+        return 1.4;
+      case WeaponId.magnum:
+        return 1.3;
+      case WeaponId.smg:
+      case WeaponId.minigun:
+        return 0.72;
+      case WeaponId.shotgun:
+        return 0.7;
+      default:
+        return 1.0;
+    }
+  }
+
+  void _stepTracers(double dt) {
+    for (final t in _tracers) {
+      final step = t.vel * dt;
+      t.pos = t.pos + step;
+      t.travelled += step.distance;
+      if (t.travelled > t.range) continue;
+      if (_blocksBullet(t.pos.dx, t.pos.dy)) {
+        t.travelled = t.range + 1;
+        for (var i = 0; i < 4; i++) {
+          final a = math.Random().nextDouble() * math.pi * 2;
+          _fx.add(_Fx(t.pos, Offset(math.cos(a) * 70, math.sin(a) * 70), 0.22,
+              2.4, t.color));
+        }
+      }
+    }
+    _tracers.removeWhere((t) => t.travelled > t.range);
+    if (_tracers.length > 400) _tracers.removeRange(0, _tracers.length - 400);
+  }
+
+  void _stepFx(double dt) {
+    for (final f in _fx) {
+      f.life -= dt;
+      f.pos = f.pos + f.vel * dt;
+      f.vel = f.vel * (1 - (3.2 * dt).clamp(0.0, 1.0));
+    }
+    _fx.removeWhere((f) => f.life <= 0);
+    if (_fx.length > 320) _fx.removeRange(0, _fx.length - 320);
   }
 
   /// Who the camera follows: you while alive, otherwise a spectated player.
@@ -1167,12 +1414,42 @@ class _ArenaViewState extends State<_ArenaView>
 
   void _cycleSpectate() => setState(() => _specIdx++);
 
-  /// Applies a control's own size + opacity (set in the Controls editor).
-  Widget _sized(String key, Widget child) {
+  /// The crate under your feet that would cost you the gun in your hands.
+  /// (An empty slot is filled automatically by the server — no prompt needed.)
+  NetLoot? _pickupTarget(NetClient c, NetPlayer me) {
+    if (me.wi2 < 0) return null; // there's a free slot; walking over it works
+    for (final l in c.loot) {
+      if (l.kind == 0) continue;
+      if ((l.x - _selfX).abs() > 44 || (l.y - _selfY).abs() > 44) continue;
+      if (l.wi == me.wi || l.wi == me.wi2) continue;
+      return l;
+    }
+    return null;
+  }
+
+  /// Places a control at the player's saved position for this orientation,
+  /// with its own size and opacity — the same layout they set up for solo play.
+  Widget _place(Size s, String key, Widget child, double w, double h,
+      [EdgeInsets safe = EdgeInsets.zero]) {
     final p = Profile.instance;
-    return Opacity(
-      opacity: p.hudOpacityOf(key),
-      child: Transform.scale(scale: p.hudScaleOf(key), child: child),
+    final sc = p.hudScaleOf(key);
+    final op = p.hudOpacityOf(key);
+    final ww = w * sc, hh = h * sc;
+    final f = p.hudPosOf(key);
+    final maxL = (s.width - safe.right - ww).clamp(0.0, s.width);
+    final maxT = (s.height - safe.bottom - hh).clamp(0.0, s.height);
+    final left =
+        (f[0] * s.width - ww / 2).clamp(safe.left.clamp(0.0, maxL), maxL);
+    final top =
+        (f[1] * s.height - hh / 2).clamp(safe.top.clamp(0.0, maxT), maxT);
+    return Positioned(
+      key: ValueKey('ctl-$key'),
+      left: left,
+      top: top,
+      child: Opacity(
+        opacity: op,
+        child: Transform.scale(scale: sc, child: child),
+      ),
     );
   }
 
@@ -1188,25 +1465,19 @@ class _ArenaViewState extends State<_ArenaView>
   // ---- match over screen (shareable) ----
   static final GlobalKey _shotKey = GlobalKey();
 
-  Future<void> _shareResult(NetClient c) async {
+  Future<void> _shareResult(BuildContext context, NetClient c) {
     final me = c.me;
     final won = c.matchWinner != null && me != null && me.name == c.matchWinner;
     final txt = won
         ? '🏆 WINNER WINNER! I took the Zone Royale custom room — ${me.kills} kills. Beat that!'
         : '🔫 Zone Royale custom room — ${c.matchWinner} took it. ${me?.kills ?? 0} kills. Rematch?';
-    final png = await captureBoundary(_shotKey);
-    try {
-      if (png == null) throw StateError('capture failed');
-      final dir = await getTemporaryDirectory();
-      final file =
-          await File('${dir.path}/zone_royale_room.png').writeAsBytes(png);
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path, mimeType: 'image/png')],
-        text: txt,
-      ));
-    } catch (_) {
-      await SharePlus.instance.share(ShareParams(text: txt)); // text fallback
-    }
+    return shareCard(
+      context,
+      cardKey: _shotKey,
+      text: txt,
+      subject: 'Zone Royale custom room',
+      fileStem: 'zone_royale_room',
+    );
   }
 
   Widget _matchOver(NetClient c, NetPlayer? me) {
@@ -1280,7 +1551,7 @@ class _ArenaViewState extends State<_ArenaView>
                     children: [
                       Expanded(
                           child: _ghostBtn(Icons.ios_share, 'SHARE',
-                              () => _shareResult(c))),
+                              () => _shareResult(context, c))),
                       const SizedBox(width: 12),
                       Expanded(
                           child: _ghostBtn(
@@ -1379,9 +1650,160 @@ class _ArenaViewState extends State<_ArenaView>
     );
   }
 
+  /// Weapon panel: what you're holding, its ammo, and a tap to reload.
+  Widget _weaponPanel(NetPlayer? me) {
+    final id = WeaponId.values[(me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)];
+    final w = kWeapons[id]!;
+    final ammo = me?.ammo ?? 0;
+    final low = ammo <= (w.mag * 0.3).ceil();
+    return GestureDetector(
+      onTap: () => _reloadQ = true,
+      child: Container(
+        width: 130,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: (me?.reloading ?? false)
+                  ? kSafeEdge
+                  : (low ? kAccent2 : w.color.withValues(alpha: 0.6))),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+                width: 100,
+                height: 22,
+                child: CustomPaint(painter: _GunPainter(id))),
+            Text(w.name.toUpperCase(),
+                style: TextStyle(
+                    color: w.color,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12)),
+            Text((me?.reloading ?? false) ? 'RELOADING…' : '$ammo / ${w.mag}',
+                style: TextStyle(
+                    color: (me?.reloading ?? false)
+                        ? kSafeEdge
+                        : (low ? kAccent2 : Colors.white),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// The second slot + a tap to switch. Online loot follows the same rule as
+  /// offline: it can fill an empty slot, never take the gun from your hands.
+  Widget _swapPanel(NetPlayer? me) {
+    final other = me == null || me.wi2 < 0
+        ? null
+        : WeaponId.values[me.wi2.clamp(0, WeaponId.values.length - 1)];
+    final col = other == null ? Colors.white24 : kWeapons[other]!.color;
+    return GestureDetector(
+      onTap: other == null ? null : () => _swapQ = true,
+      child: Container(
+        width: 74,
+        height: 66,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: other == null ? Colors.white24 : col.withValues(alpha: 0.8)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.swap_horiz_rounded, size: 12, color: Colors.white54),
+                SizedBox(width: 3),
+                Text('SWITCH',
+                    style: TextStyle(
+                        fontSize: 8,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white54)),
+              ],
+            ),
+            const SizedBox(height: 2),
+            SizedBox(
+              width: 60,
+              height: 20,
+              child: other == null
+                  ? const Center(
+                      child: Text('EMPTY',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.white30,
+                              fontWeight: FontWeight.w800)))
+                  : CustomPaint(painter: _GunPainter(other)),
+            ),
+            Text(other == null ? '—' : kWeapons[other]!.name.toUpperCase(),
+                maxLines: 1,
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: other == null ? Colors.white24 : col)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _pickupPanel(NetClient c, NetPlayer? me) {
+    if (me == null || !me.alive) return const SizedBox.shrink();
+    final l = _pickupTarget(c, me);
+    if (l == null) return const SizedBox.shrink();
+    final id = WeaponId.values[l.wi.clamp(0, WeaponId.values.length - 1)];
+    final w = kWeapons[id]!;
+    return GestureDetector(
+      onTap: () => _takeQ = true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.62),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: w.color, width: 2),
+          boxShadow: [
+            BoxShadow(color: w.color.withValues(alpha: 0.35), blurRadius: 14)
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+                width: 42, height: 18, child: CustomPaint(painter: _GunPainter(id))),
+            const SizedBox(width: 8),
+            Text('PICK UP  ${w.name.toUpperCase()}',
+                style: TextStyle(
+                    color: w.color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.client;
+    return LayoutBuilder(builder: (context, box) {
+      // Fractional control positions have to be measured against the box the
+      // Stack actually gets, not the whole window — otherwise every control
+      // lands low and right of where the editor put it.
+      final size = Size(box.maxWidth, box.maxHeight);
+      Profile.instance.hudLandscape = size.width > size.height;
+      return _stack(c, size);
+    });
+  }
+
+  Widget _stack(NetClient c, Size size) {
     return Stack(
       children: [
         // The world repaints every display frame (90 Hz) so prediction +
@@ -1406,6 +1828,8 @@ class _ArenaViewState extends State<_ArenaView>
                           : null,
                       selfAim: _aim,
                       camId: cam?.id ?? c.myId,
+                      tracers: _tracers,
+                      fx: _fx,
                     ),
                   ),
                 );
@@ -1417,23 +1841,66 @@ class _ArenaViewState extends State<_ArenaView>
         Positioned.fill(
           child: AnimatedBuilder(
             animation: c.rev,
-            builder: (_, _) => _overlays(c),
+            builder: (_, _) => _overlays(c, size, MediaQuery.of(context).padding),
           ),
         ),
       ],
     );
   }
 
-  Widget _overlays(NetClient c) {
+  Widget _overlays(NetClient c, Size size, EdgeInsets safe) {
     final me = c.me;
     final spectating = me != null && !me.alive && c.matchWinner == null;
     final cam = _camTarget(c);
+    final hpFrac = ((me?.hp ?? 0) / 100).clamp(0.0, 1.0);
     return Stack(
       children: [
+        // No snapshot for us yet: say so instead of showing an empty arena
+        // that looks like the game broke.
+        if (me == null)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.45),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(color: kSafeEdge),
+                      const SizedBox(height: 16),
+                      Text(
+                          c.serverOutdated
+                              ? 'SERVER NEEDS UPDATING'
+                              : 'WAITING FOR THE SERVER…',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2)),
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40),
+                        child: Text(
+                            c.serverOutdated
+                                ? 'This host is running an older build, so it '
+                                    'speaks a different language than this app. '
+                                    'Redeploy the server and rejoin.'
+                                : 'Holding for the first world snapshot.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.6),
+                                fontSize: 12,
+                                height: 1.4)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         // spectate banner
         if (spectating)
           Positioned(
-            top: 60,
+            top: 58,
             left: 0,
             right: 0,
             child: IgnorePointer(
@@ -1459,31 +1926,35 @@ class _ArenaViewState extends State<_ArenaView>
           ),
         // top HUD
         Positioned(
-          top: 10,
-          left: 14,
-          right: 14,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _pill('ALIVE  ${c.aliveCount}'),
-              if (c.rounds > 1)
-                _pill('ROUND  ${c.round}/${c.rounds * 2 - 1}', color: kAccent),
-              // measurable smoothness + network health
-              _pill('$_fps FPS',
-                  color: _fps >= 80
-                      ? const Color(0xFF57E389)
-                      : (_fps >= 50 ? kAccent : kAccent2)),
-              _pill(c.pingMs == 0 ? '— MS' : '${c.pingMs} MS',
-                  color: c.pingMs == 0
-                      ? Colors.white54
-                      : (c.pingMs < 100
-                          ? const Color(0xFF57E389)
-                          : (c.pingMs < 200 ? kAccent : kAccent2))),
-              GestureDetector(
-                onTap: widget.onLeave,
-                child: _pill('LEAVE', color: kAccent2),
-              ),
-            ],
+          top: 8,
+          left: 12,
+          right: 12,
+          child: SafeArea(
+            bottom: false,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _pill('ALIVE  ${c.aliveCount}'),
+                if (c.rounds > 1)
+                  _pill('ROUND  ${c.round}/${c.rounds * 2 - 1}', color: kAccent),
+                _pill('${me?.kills ?? 0} KILLS'),
+                // measurable smoothness + network health
+                _pill('$_fps FPS',
+                    color: _fps >= 80
+                        ? const Color(0xFF57E389)
+                        : (_fps >= 50 ? kAccent : kAccent2)),
+                _pill(c.pingMs == 0 ? '— MS' : '${c.pingMs} MS',
+                    color: c.pingMs == 0
+                        ? Colors.white54
+                        : (c.pingMs < 100
+                            ? const Color(0xFF57E389)
+                            : (c.pingMs < 200 ? kAccent : kAccent2))),
+                GestureDetector(
+                  onTap: widget.onLeave,
+                  child: _pill('LEAVE', color: kAccent2),
+                ),
+              ],
+            ),
           ),
         ),
         // match over screen (takes priority) — shareable, like the solo end card
@@ -1516,65 +1987,134 @@ class _ArenaViewState extends State<_ArenaView>
               ),
             ),
           ),
-        // Controls carry stable keys: banners above them come and go, which
-        // shifts child indices — without a key Flutter rebuilds the Joystick's
-        // State mid-drag, onRelease never fires, and the stick sticks (the
-        // "character moves by itself" bug).
-        Positioned(
-          key: const ValueKey('ctl-move'),
-          left: 22,
-          bottom: 28,
-          child: _sized(
-            'move',
-            Joystick(
-              key: const ValueKey('js-move'),
-              onChange: (d) => _move = d,
-              onRelease: () => _move = Offset.zero,
-              accent: kSafeEdge,
-            ),
+        // Controls sit exactly where the player dragged them in the Controls
+        // editor — including the separate landscape layout. Stable keys keep
+        // the joystick State alive when banners come and go (otherwise a
+        // rebuild mid-drag left the stick stuck on).
+        _place(
+          size,
+          Profile.instance.leftHanded ? 'aim' : 'move',
+          Joystick(
+            key: const ValueKey('js-move'),
+            onChange: (d) => _move = d,
+            onRelease: () => _move = Offset.zero,
+            accent: kSafeEdge,
           ),
+          132,
+          132,
+          safe,
         ),
-        Positioned(
-          key: const ValueKey('ctl-aim'),
-          right: 22,
-          bottom: 28,
-          child: _sized(
-            'aim',
-            Joystick(
-              key: const ValueKey('js-aim'),
-              onChange: _aimStick,
-              onRelease: () => _fire = false,
-              accent: kAccent2,
-            ),
+        _place(
+          size,
+          Profile.instance.leftHanded ? 'move' : 'aim',
+          Joystick(
+            key: const ValueKey('js-aim'),
+            onChange: _aimStick,
+            onRelease: () => _fire = false,
+            accent: kAccent2,
           ),
+          132,
+          132,
+          safe,
         ),
-        // grenade + skill action buttons (above the aim stick)
-        Positioned(
-          key: const ValueKey('ctl-nade'),
-          right: 30,
-          bottom: 200,
-          child: _sized(
+        _place(
+            size,
             'nade',
-            _actionButton('💣', '${me?.nades ?? 0}',
-                const Color(0xFF6ABF5A), (me?.nades ?? 0) > 0, () {
-              _nadeQ = true;
-            }),
-          ),
-        ),
-        Positioned(
-          key: const ValueKey('ctl-skill'),
-          right: 108,
-          bottom: 200,
-          child: _sized(
+            _actionButton('💣', '${me?.nades ?? 0}', const Color(0xFF6ABF5A),
+                (me?.nades ?? 0) > 0, () => _nadeQ = true),
+            64,
+            64,
+            safe),
+        _place(
+            size,
             'skill',
-            _actionButton(
-                '⚡',
-                (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
-                const Color(0xFFB06BFF),
-                (me?.cd ?? 0) <= 0, () {
-              _skillQ = true;
-            }),
+            _actionButton('⚡', (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
+                const Color(0xFFB06BFF), (me?.cd ?? 0) <= 0, () => _skillQ = true),
+            64,
+            64,
+            safe),
+        _place(
+            size,
+            'wall',
+            _actionButton('🧱', '${me?.walls ?? 0}', const Color(0xFF7FE8FF),
+                (me?.walls ?? 0) > 0, () => _wallQ = true),
+            60,
+            60,
+            safe),
+        _place(size, 'reload', _weaponPanel(me), 130, 70, safe),
+        _place(size, 'swap', _swapPanel(me), 74, 66, safe),
+        _place(size, 'pick', _pickupPanel(c, me), 168, 52, safe),
+        _place(
+          size,
+          'hp',
+          SizedBox(
+            width: 150,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${me?.hp ?? 0} HP',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                        color: Colors.white,
+                        shadows: [Shadow(color: Colors.black, blurRadius: 3)])),
+                const SizedBox(height: 3),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: hpFrac,
+                    minHeight: 12,
+                    backgroundColor: Colors.black45,
+                    valueColor: AlwaysStoppedAnimation(Color.lerp(
+                        const Color(0xFFFF4D4D),
+                        const Color(0xFF52E06A),
+                        hpFrac)!),
+                  ),
+                ),
+                if ((me?.vest ?? 0) > 0 || (me?.helmet ?? 0) > 0) ...[
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      if ((me?.vest ?? 0) > 0)
+                        Expanded(
+                          flex: 3,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: (me!.vest / 100).clamp(0.0, 1.0),
+                              minHeight: 5,
+                              backgroundColor: Colors.black45,
+                              valueColor: const AlwaysStoppedAnimation(
+                                  Color(0xFF7FC4FF)),
+                            ),
+                          ),
+                        ),
+                      if ((me?.vest ?? 0) > 0 && (me?.helmet ?? 0) > 0)
+                        const SizedBox(width: 4),
+                      if ((me?.helmet ?? 0) > 0)
+                        Expanded(
+                          flex: 2,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: (me!.helmet / 100).clamp(0.0, 1.0),
+                              minHeight: 5,
+                              backgroundColor: Colors.black45,
+                              valueColor: const AlwaysStoppedAnimation(
+                                  Color(0xFFC9D6A8)),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
           ),
+          150,
+          44,
+          safe,
         ),
       ],
     );
@@ -1582,7 +2122,7 @@ class _ArenaViewState extends State<_ArenaView>
 
   Widget _pill(String text, {Color color = Colors.white}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(20),
@@ -1591,25 +2131,52 @@ class _ArenaViewState extends State<_ArenaView>
       child: Text(text,
           style: TextStyle(
               color: color,
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w800,
               letterSpacing: 1)),
     );
   }
 }
 
+/// Draws a gun as a HUD icon (same art as the one in your operator's hands).
+class _GunPainter extends CustomPainter {
+  final WeaponId weapon;
+  const _GunPainter(this.weapon);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    drawGunIcon(canvas, Offset(size.width / 2, size.height / 2),
+        size.width * 0.96, weapon);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GunPainter old) => old.weapon != weapon;
+}
+
+/// Renders the online arena. Same visual language as the offline match:
+/// one consistent light direction (top-left), extruded cover with real roofs,
+/// textured ground, glowing tracers and a gas wall you can read at a glance.
 class _ArenaPainter extends CustomPainter {
   final NetClient c;
   final Offset? selfPos; // client-predicted position of your own operator
   final double selfAim;
   final int camId; // who the camera follows (you, or a spectated player)
-  _ArenaPainter(this.c, {this.selfPos, this.selfAim = 0, required this.camId});
+  final List<_Tracer> tracers;
+  final List<_Fx> fx;
+  _ArenaPainter(this.c,
+      {this.selfPos,
+      this.selfAim = 0,
+      required this.camId,
+      required this.tracers,
+      required this.fx});
 
   // Smoothed world transforms, computed once per frame: predicted for you,
-  // interpolated for everyone else. (Recomputing per draw call meant 3x the
-  // work and 3x the allocations for every player, every frame.)
+  // interpolated for everyone else.
   final Map<int, Offset> _pos = {};
   final Map<int, double> _aims = {};
+
+  final Paint _fill = Paint()..style = PaintingStyle.fill;
+  final Paint _stroke = Paint()..style = PaintingStyle.stroke;
 
   void _resolveTransforms() {
     _pos.clear();
@@ -1626,165 +2193,408 @@ class _ArenaPainter extends CustomPainter {
     }
   }
 
-  // Ground tint per selected room map — so the host's map choice is visible.
-  static Color _groundFor(String map) {
+  /// Ground tint per selected room map — so the host's map choice is visible.
+  static List<Color> _groundFor(String map) {
     switch (map.toUpperCase()) {
       case 'URBAN BUILDINGS':
       case 'URBAN':
-        return const Color(0xFF15171C);
+        return const [Color(0xFF1A1F2B), Color(0xFF090C13)];
       case 'FOREST':
-        return const Color(0xFF10190F);
+        return const [Color(0xFF12241A), Color(0xFF060E09)];
       case 'COMPOUND':
-        return const Color(0xFF17140F);
+        return const [Color(0xFF1C1A24), Color(0xFF0A0810)];
       case 'BADLANDS':
-        return const Color(0xFF1B140E);
+        return const [Color(0xFF241D14), Color(0xFF0E0A06)];
       default:
-        return const Color(0xFF10141B);
+        return const [Color(0xFF141A26), Color(0xFF070A10)];
     }
+  }
+
+  /// Cheap deterministic hash → stable "random" per world cell, so ground
+  /// detail doesn't crawl as the camera moves.
+  static double _hash(int x, int y) {
+    var h = x * 374761393 + y * 668265263;
+    h = (h ^ (h >> 13)) * 1274126177;
+    return ((h ^ (h >> 16)) & 0xFFFF) / 65535.0;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
-    // background (tinted by the room's chosen map)
-    canvas.drawRect(Offset.zero & size, Paint()..color = _groundFor(c.map));
+    _resolveTransforms();
 
-    _resolveTransforms(); // one interpolation pass per frame, not per draw
-
-    // camera follows the (predicted/interpolated) target — you, or a spectatee
+    final cols = _groundFor(c.map);
     final camPos = _pos[camId] ?? Offset(c.world / 2, c.world / 2);
     final camX = camPos.dx, camY = camPos.dy;
-    final scale = size.height / kViewHeight;
+    // Landscape shows a shorter vertical slice so operators stay readable.
+    final viewH =
+        size.width > size.height ? kViewHeightLandscape : kViewHeight;
+    final scale = size.height / viewH;
 
-    // Everything outside the camera is culled — at 90Hz with ~54 obstacles and
-    // a 3200-unit world, drawing offscreen geometry was the main cost.
-    final halfW = size.width / (2 * scale) + 60;
-    final halfH = size.height / (2 * scale) + 60;
+    // Everything outside the camera is culled.
+    final halfW = size.width / (2 * scale) + 80;
+    final halfH = size.height / (2 * scale) + 80;
     final vL = camX - halfW, vR = camX + halfW;
     final vT = camY - halfH, vB = camY + halfH;
     bool onScreen(double x, double y, [double m = 0]) =>
         x > vL - m && x < vR + m && y > vT - m && y < vB + m;
 
-    final fill = Paint()..style = PaintingStyle.fill;
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
+    canvas.drawRect(Offset.zero & size, _fill..color = cols[1]);
 
     canvas.save();
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(scale);
     canvas.translate(-camX, -camY);
 
-    // world border + grid
-    final border = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 6
-      ..color = kSafeEdge.withValues(alpha: 0.5);
-    canvas.drawRect(Rect.fromLTWH(0, 0, c.world, c.world), border);
-    final grid = Paint()
-      ..color = Colors.white.withValues(alpha: 0.05)
-      ..strokeWidth = 1;
-    // only the grid lines crossing the view
-    final double g0 = ((vL / 400).floor() * 400).clamp(0.0, c.world).toDouble();
-    for (double g = g0; g <= vR && g <= c.world; g += 400) {
-      canvas.drawLine(Offset(g, vT), Offset(g, vB), grid);
-    }
-    final double h0 = ((vT / 400).floor() * 400).clamp(0.0, c.world).toDouble();
-    for (double g = h0; g <= vB && g <= c.world; g += 400) {
-      canvas.drawLine(Offset(vL, g), Offset(vR, g), grid);
-    }
+    _drawGround(canvas, cols, vL, vT, vR, vB);
+    _drawObstacles(canvas, onScreen, shadowsOnly: true);
+    _drawLoot(canvas, onScreen);
+    _drawObstacles(canvas, onScreen);
+    _drawWalls(canvas, onScreen);
+    _drawTracers(canvas, onScreen);
+    _drawGrenades(canvas, onScreen);
+    _drawPlayers(canvas, onScreen);
+    _drawFx(canvas, onScreen);
+    _drawBushes(canvas, onScreen);
+    _drawGas(canvas, vL, vT, vR, vB);
+    canvas.restore();
 
-    // obstacles / cover (buildings)
-    final obFill = Paint()..color = const Color(0xFF2B303B);
-    final obTop = Paint()..color = const Color(0xFF3A414F);
-    final obEdge = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2
-      ..color = Colors.black.withValues(alpha: 0.5);
-    for (final o in c.obstacles) {
-      if (!onScreen(o.x, o.y, o.w / 2 + o.h / 2)) continue;
-      final rect = Rect.fromCenter(
-          center: Offset(o.x, o.y), width: o.w, height: o.h);
-      final rr = RRect.fromRectAndRadius(rect, const Radius.circular(5));
-      canvas.drawRRect(rr.shift(const Offset(0, 6)),
-          Paint()..color = Colors.black.withValues(alpha: 0.35)); // drop shadow
-      canvas.drawRRect(rr, obFill);
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(rect.deflate(o.w * 0.16), const Radius.circular(4)),
-          obTop);
-      canvas.drawRRect(rr, obEdge);
-    }
+    _drawLabels(canvas, size, camX, camY, scale, onScreen);
+    _drawVignette(canvas, size);
+  }
 
-    // loot pickups: weapon crates (gun-coloured box + icon) and medkits (green +)
-    for (final l in c.loot) {
-      if (!onScreen(l.x, l.y, 30)) continue;
-      final o = Offset(l.x, l.y);
-      // soft glow so pickups are easy to spot
-      canvas.drawCircle(o, 22,
-          Paint()..color = (l.kind == 'm' ? const Color(0xFF57E389) : kAccent)
-              .withValues(alpha: 0.16));
-      if (l.kind == 'm') {
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(center: o, width: 26, height: 26),
-                const Radius.circular(5)),
-            Paint()..color = Colors.white);
-        final cross = Paint()..color = const Color(0xFFE23B3B);
-        canvas.drawRect(
-            Rect.fromCenter(center: o, width: 16, height: 5), cross);
-        canvas.drawRect(
-            Rect.fromCenter(center: o, width: 5, height: 16), cross);
-      } else {
-        final wid = l.wi.clamp(0, WeaponId.values.length - 1);
-        final col = kWeapons[WeaponId.values[wid]]?.color ?? kAccent;
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(center: o, width: 30, height: 24),
-                const Radius.circular(5)),
-            Paint()..color = const Color(0xFF20242D));
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(center: o, width: 30, height: 24),
-                const Radius.circular(5)),
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 2
-              ..color = col);
-        canvas.drawRect(Rect.fromCenter(center: o, width: 16, height: 4),
-            Paint()..color = col);
+  // ---------------------------------------------------------------- ground
+  void _drawGround(Canvas canvas, List<Color> cols, double vL, double vT,
+      double vR, double vB) {
+    final rect = Rect.fromLTRB(vL, vT, vR, vB);
+    canvas.drawRect(
+        rect,
+        _fill
+          ..shader = ui.Gradient.radial(
+              Offset(c.world / 2, c.world / 2), c.world * 0.72, cols));
+    _fill.shader = null;
+
+    // Ground detail: stable patches + gravel, only for the cells in view. This
+    // is what stops the floor reading as flat coloured paper.
+    const cell = 160.0;
+    final x0 = (vL / cell).floor(), x1 = (vR / cell).ceil();
+    final y0 = (vT / cell).floor(), y1 = (vB / cell).ceil();
+    for (var gx = x0; gx <= x1; gx++) {
+      for (var gy = y0; gy <= y1; gy++) {
+        final h = _hash(gx, gy);
+        final cx = gx * cell + h * cell;
+        final cy = gy * cell + _hash(gy, gx) * cell;
+        if (h < 0.42) {
+          canvas.drawOval(
+              Rect.fromCenter(
+                  center: Offset(cx, cy),
+                  width: 70 + h * 150,
+                  height: 46 + h * 90),
+              _fill..color = Colors.white.withValues(alpha: 0.018));
+        } else if (h < 0.62) {
+          canvas.drawOval(
+              Rect.fromCenter(
+                  center: Offset(cx, cy), width: 90 + h * 120, height: 60),
+              _fill..color = Colors.black.withValues(alpha: 0.16));
+        }
+        // scattered gravel specks
+        for (var i = 0; i < 3; i++) {
+          final s = _hash(gx * 7 + i, gy * 13 - i);
+          canvas.drawCircle(
+              Offset(gx * cell + s * cell, gy * cell + _hash(gy + i, gx) * cell),
+              1.2 + s * 1.6,
+              _fill..color = Colors.white.withValues(alpha: 0.035));
+        }
       }
     }
 
-    // bullets — extrapolated along their velocity so they glide, not step
-    final age = c.snapAge;
-    final bp = Paint()..color = kAccent;
-    final bg = Paint()..color = kAccent.withValues(alpha: 0.35);
-    for (final b in c.bullets) {
-      final o = b.at(age);
-      if (!onScreen(o.dx, o.dy, 20)) continue;
-      canvas.drawCircle(o, 10, bg);
-      canvas.drawCircle(o, 4.5, bp);
+    // faint survey grid keeps a sense of scale
+    _stroke
+      ..color = Colors.white.withValues(alpha: 0.035)
+      ..strokeWidth = 1;
+    final g0 = (vL / 400).floor() * 400.0;
+    for (var g = g0; g <= vR; g += 400) {
+      canvas.drawLine(Offset(g, vT), Offset(g, vB), _stroke);
+    }
+    final h0 = (vT / 400).floor() * 400.0;
+    for (var g = h0; g <= vB; g += 400) {
+      canvas.drawLine(Offset(vL, g), Offset(vR, g), _stroke);
     }
 
-    // flying grenades (also extrapolated)
+    // world border
+    canvas.drawRect(
+        Rect.fromLTWH(0, 0, c.world, c.world),
+        _stroke
+          ..color = kSafeEdge.withValues(alpha: 0.35)
+          ..strokeWidth = 6);
+  }
+
+  // ------------------------------------------------------------- obstacles
+  void _drawObstacles(Canvas canvas, bool Function(double, double, [double]) vis,
+      {bool shadowsOnly = false}) {
+    for (final o in c.obstacles) {
+      if (o.kind == 2) continue; // bushes draw on top, later
+      if (!vis(o.x, o.y, o.w / 2 + o.h / 2 + 30)) continue;
+      final rect =
+          Rect.fromCenter(center: Offset(o.x, o.y), width: o.w, height: o.h);
+      final tall = o.kind == 0;
+      final lift = tall ? 18.0 : 10.0;
+      final radius = Radius.circular(tall ? 4 : 5);
+
+      if (shadowsOnly) {
+        // one light source, so every shadow falls the same way
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(rect.translate(lift * 0.6, lift * 0.8),
+                radius),
+            _fill..color = Colors.black.withValues(alpha: 0.42));
+        continue;
+      }
+
+      // extruded side wall
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromLTRB(rect.left, rect.top - lift, rect.right, rect.bottom),
+              radius),
+          _fill..color = tall ? const Color(0xFF232A38) : const Color(0xFF3A2C1C));
+      // roof
+      final roof = rect.translate(0, -lift);
+      canvas.drawRRect(RRect.fromRectAndRadius(roof, radius),
+          _fill..color = tall ? const Color(0xFF4A5468) : const Color(0xFF7C5C36));
+      // lit edge (top-left) + shaded edge (bottom-right)
+      canvas.drawRect(
+          Rect.fromLTWH(roof.left + 2, roof.top + 2, roof.width - 4, 3),
+          _fill..color = Colors.white.withValues(alpha: 0.22));
+      canvas.drawRect(
+          Rect.fromLTWH(roof.left + 2, roof.bottom - 4, roof.width - 4, 3),
+          _fill..color = Colors.black.withValues(alpha: 0.28));
+
+      if (tall) {
+        // rooftop plant: vents + lit windows, so buildings read as buildings
+        _fill.color = Colors.black.withValues(alpha: 0.25);
+        for (var wx = roof.left + 8; wx < roof.right - 10; wx += 22) {
+          canvas.drawRect(Rect.fromLTWH(wx, roof.top + 7, 9, 6), _fill);
+        }
+        _fill.color = const Color(0x55FFE9A8);
+        for (var wx = roof.left + 9; wx < roof.right - 9; wx += 16) {
+          for (var wy = roof.top + 16; wy < roof.bottom - 8; wy += 16) {
+            if (_hash(wx.round(), wy.round()) < 0.45) continue;
+            canvas.drawRect(Rect.fromLTWH(wx, wy, 6, 6), _fill);
+          }
+        }
+      } else {
+        // crate slats
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(roof.deflate(3), const Radius.circular(3)),
+            _stroke
+              ..color = const Color(0x66FFCF9E)
+              ..strokeWidth = 2);
+        canvas.drawLine(Offset(roof.left + 3, roof.center.dy),
+            Offset(roof.right - 3, roof.center.dy),
+            _stroke..color = const Color(0x33000000));
+      }
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(roof, radius),
+          _stroke
+            ..color = Colors.black.withValues(alpha: 0.45)
+            ..strokeWidth = 1.6);
+    }
+  }
+
+  /// Player-deployed cover: frosted energy slabs that crack as they take fire.
+  void _drawWalls(Canvas canvas, bool Function(double, double, [double]) vis) {
+    for (final w in c.walls) {
+      if (!vis(w.x, w.y, w.w + w.h)) continue;
+      final r = Rect.fromCenter(
+          center: Offset(w.x, w.y), width: w.w, height: w.h);
+      final rr = RRect.fromRectAndRadius(r, const Radius.circular(5));
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              r.translate(6, 9), const Radius.circular(5)),
+          _fill..color = Colors.black.withValues(alpha: 0.3));
+      canvas.drawRRect(
+          rr,
+          _fill
+            ..color = const Color(0xFF7FE8FF)
+                .withValues(alpha: 0.22 + 0.18 * w.health));
+      canvas.drawRRect(
+          rr,
+          _stroke
+            ..color = const Color(0xFFBFF4FF)
+                .withValues(alpha: 0.55 + 0.35 * w.health)
+            ..strokeWidth = 2.5);
+      _stroke
+        ..color = Colors.white.withValues(alpha: 0.18)
+        ..strokeWidth = 1.4;
+      final long = r.width > r.height;
+      final n = ((long ? r.width : r.height) / 22).floor();
+      for (var i = 1; i < n; i++) {
+        final t = i / n;
+        if (long) {
+          final x = r.left + r.width * t;
+          canvas.drawLine(
+              Offset(x, r.top + 3), Offset(x, r.bottom - 3), _stroke);
+        } else {
+          final y = r.top + r.height * t;
+          canvas.drawLine(
+              Offset(r.left + 3, y), Offset(r.right - 3, y), _stroke);
+        }
+      }
+    }
+  }
+
+  void _drawBushes(Canvas canvas, bool Function(double, double, [double]) vis) {
+    for (final o in c.obstacles) {
+      if (o.kind != 2) continue;
+      if (!vis(o.x, o.y, o.w)) continue;
+      final centre = Offset(o.x, o.y);
+      final rad = o.w / 2;
+      canvas.drawOval(
+          Rect.fromCenter(
+              center: centre.translate(6, 9),
+              width: rad * 2.1,
+              height: rad * 1.4),
+          _fill..color = Colors.black.withValues(alpha: 0.3));
+      canvas.drawCircle(centre, rad, _fill..color = const Color(0xCC123F1E));
+      canvas.drawCircle(centre.translate(-rad * 0.2, -rad * 0.2), rad * 0.75,
+          _fill..color = const Color(0xCC1F6B34));
+      canvas.drawCircle(centre.translate(-rad * 0.34, -rad * 0.36), rad * 0.36,
+          _fill..color = const Color(0x662FB85A));
+    }
+  }
+
+  // ------------------------------------------------------------------ loot
+  void _drawLoot(Canvas canvas, bool Function(double, double, [double]) vis) {
+    for (final l in c.loot) {
+      if (!vis(l.x, l.y, 40)) continue;
+      final o = Offset(l.x, l.y);
+      canvas.drawOval(
+          Rect.fromCenter(center: o.translate(3, 8), width: 30, height: 12),
+          _fill..color = Colors.black.withValues(alpha: 0.3));
+      if (l.kind == 0) {
+        canvas.drawCircle(o, 20,
+            _fill..color = const Color(0xFF57E389).withValues(alpha: 0.16));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: o, width: 24, height: 24),
+                const Radius.circular(5)),
+            _fill..color = const Color(0xFFF2F5F8));
+        canvas.drawRect(Rect.fromCenter(center: o, width: 15, height: 5),
+            _fill..color = const Color(0xFFE23B3B));
+        canvas.drawRect(Rect.fromCenter(center: o, width: 5, height: 15),
+            _fill..color = const Color(0xFFE23B3B));
+        continue;
+      }
+      if (l.kind == 3 || l.kind == 4 || l.kind == 5) {
+        final tint = l.kind == 3
+            ? const Color(0xFF7FC4FF)
+            : l.kind == 4
+                ? const Color(0xFFC9D6A8)
+                : const Color(0xFF7FE8FF);
+        canvas.drawCircle(o, 18, _fill..color = tint.withValues(alpha: 0.18));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(
+                    center: o,
+                    width: l.kind == 5 ? 26 : 20,
+                    height: l.kind == 5 ? 16 : 22),
+                const Radius.circular(4)),
+            _fill..color = const Color(0xFF2A3140));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(
+                    center: o,
+                    width: l.kind == 5 ? 26 : 20,
+                    height: l.kind == 5 ? 16 : 22),
+                const Radius.circular(4)),
+            _stroke..color = tint..strokeWidth = 2);
+        continue;
+      }
+      final id = WeaponId.values[l.wi.clamp(0, WeaponId.values.length - 1)];
+      final col = kWeapons[id]!.color;
+      if (l.kind == 2) {
+        // airdrop: a lit pad + a stencilled crate, visible from across the map
+        canvas.drawCircle(o, 36, _fill..color = kAccent.withValues(alpha: 0.14));
+        canvas.drawCircle(o, 26,
+            _stroke..color = kAccent.withValues(alpha: 0.8)..strokeWidth = 2);
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: o, width: 36, height: 30),
+                const Radius.circular(4)),
+            _fill..color = const Color(0xFF2A2F1E));
+        canvas.drawRRect(
+            RRect.fromRectAndRadius(
+                Rect.fromCenter(center: o, width: 36, height: 30),
+                const Radius.circular(4)),
+            _stroke..color = kAccent..strokeWidth = 2);
+      } else {
+        canvas.drawCircle(o, 16, _fill..color = col.withValues(alpha: 0.18));
+      }
+      drawGunIcon(canvas, o, 28, id, fill: _fill, stroke: _stroke);
+    }
+  }
+
+  // --------------------------------------------------------------- tracers
+  void _drawTracers(
+      Canvas canvas, bool Function(double, double, [double]) vis) {
+    for (final t in tracers) {
+      if (!vis(t.pos.dx, t.pos.dy, 30)) continue;
+      final back = t.pos - t.vel * (0.022 * (0.6 + t.width));
+      canvas.drawLine(
+          back,
+          t.pos,
+          _stroke
+            ..color = t.color.withValues(alpha: 0.3)
+            ..strokeWidth = 6 * t.width
+            ..strokeCap = StrokeCap.round);
+      canvas.drawLine(
+          back,
+          t.pos,
+          _stroke
+            ..color = t.color
+            ..strokeWidth = 2.4 * t.width);
+      canvas.drawCircle(t.pos, 2.4 * t.width, _fill..color = Colors.white);
+    }
+  }
+
+  void _drawFx(Canvas canvas, bool Function(double, double, [double]) vis) {
+    for (final f in fx) {
+      if (!vis(f.pos.dx, f.pos.dy, 20)) continue;
+      final a = (f.life / f.maxLife).clamp(0.0, 1.0);
+      canvas.drawCircle(f.pos, f.size * a,
+          _fill..color = f.color.withValues(alpha: a * 0.95));
+    }
+  }
+
+  void _drawGrenades(
+      Canvas canvas, bool Function(double, double, [double]) vis) {
     for (final g in c.nades) {
-      final o = g.at(age);
-      if (!onScreen(o.dx, o.dy, 24)) continue;
+      if (!vis(g.dx, g.dy, 24)) continue;
+      canvas.drawOval(
+          Rect.fromCenter(center: g.translate(2, 6), width: 16, height: 7),
+          _fill..color = Colors.black.withValues(alpha: 0.35));
+      canvas.drawCircle(g, 7, _fill..color = const Color(0xFF2E3A2A));
+      canvas.drawCircle(g.translate(-2, -2), 3,
+          _fill..color = const Color(0xFF6A7A55));
       canvas.drawCircle(
-          o, 14, Paint()..color = const Color(0xFF6ABF5A).withValues(alpha: 0.25));
-      canvas.drawCircle(o, 7, Paint()..color = const Color(0xFF2E7D32));
-      canvas.drawCircle(
-          o,
-          7,
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2
-            ..color = const Color(0xFF8FE07A));
+          g, 7, _stroke..color = const Color(0xFF8FE07A)..strokeWidth = 1.5);
     }
+  }
 
-    // players (people still sitting in the lobby aren't in the world yet)
+  // --------------------------------------------------------------- players
+  void _drawPlayers(Canvas canvas, bool Function(double, double, [double]) vis) {
     for (final p in c.players) {
-      if (!p.ready) continue;
+      if (!p.ready) continue; // people still in the lobby aren't in the world
+      final pos = _pos[p.id] ?? Offset(p.x, p.y);
+      if (!vis(pos.dx, pos.dy, kPlayerRadius * 3)) continue;
       final mine = p.id == c.myId;
+
+      if (!p.alive) {
+        canvas.drawOval(
+            Rect.fromCenter(
+                center: pos, width: kPlayerRadius * 2.2, height: kPlayerRadius),
+            _fill..color = Colors.black.withValues(alpha: 0.4));
+        continue;
+      }
+
       final outfit = mine
           ? Profile.instance.outfitColor
           : Color(kOutfitColors[p.id % kOutfitColors.length]);
@@ -1793,91 +2603,90 @@ class _ArenaPainter extends CustomPainter {
           : Color(kSkinTones[p.id % kSkinTones.length]);
       final accessory =
           mine ? Profile.instance.accessory : p.id % kAccessoryNames.length;
-      // weapon reflects what the player currently holds (loot can swap it)
       final weapon = WeaponId.values[p.wi.clamp(0, WeaponId.values.length - 1)];
-      final hero = mine ? Profile.instance.hero : p.id % kHeroes.length;
-
-      final pos = _pos[p.id] ?? Offset(p.x, p.y);
-      if (!onScreen(pos.dx, pos.dy, kPlayerRadius * 2)) continue;
+      final hero = mine ? Profile.instance.hero : c.heroOf(p.id) % kHeroes.length;
       final aim = _aims[p.id] ?? p.aim;
 
-      if (!p.alive) {
-        // faint fallen marker
-        canvas.drawCircle(pos, kPlayerRadius * 0.9,
-            Paint()..color = Colors.black.withValues(alpha: 0.35));
-        continue;
-      }
-      drawOperator(canvas, pos, kPlayerRadius, aim, aim, outfit, skin,
-          accessory, weapon,
-          fill: fill, stroke: stroke, walk: 0, hero: hero);
+      // grounded shadow, matching the map's single light direction
+      canvas.drawOval(
+          Rect.fromCenter(
+              center: pos.translate(4, kPlayerRadius * 0.62),
+              width: kPlayerRadius * 2.1,
+              height: kPlayerRadius * 0.9),
+          _fill..color = Colors.black.withValues(alpha: 0.4));
 
-      if (p.shield) {
-        canvas.drawCircle(pos, kPlayerRadius * 1.5,
-            Paint()..color = kSafeEdge.withValues(alpha: 0.18));
-        canvas.drawCircle(
-            pos,
-            kPlayerRadius * 1.5,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 3
-              ..color = kSafeEdge);
-      }
       if (mine) {
         canvas.drawCircle(
             pos,
-            kPlayerRadius * 1.7,
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 2.5
-              ..color = kSafeEdge.withValues(alpha: 0.7));
+            kPlayerRadius + 8,
+            _stroke
+              ..color = kSafeEdge.withValues(alpha: 0.55)
+              ..strokeWidth = 2.5);
+      }
+      drawOperator(canvas, pos, kPlayerRadius, aim, aim, outfit, skin,
+          accessory, weapon,
+          fill: _fill,
+          stroke: _stroke,
+          walk: 0,
+          hero: hero,
+          vest: p.vest > 0,
+          helmet: p.helmet > 0);
+
+      if (p.shield) {
+        canvas.drawCircle(pos, kPlayerRadius * 1.5,
+            _fill..color = kSafeEdge.withValues(alpha: 0.16));
+        canvas.drawCircle(pos, kPlayerRadius * 1.5,
+            _stroke..color = kSafeEdge..strokeWidth = 3);
       }
     }
+  }
 
-    // shrinking gas zone: gas fills everything outside the safe circle
-    // fill only the visible rect, not the whole world (huge overdraw saving)
+  // ------------------------------------------------------------------- gas
+  void _drawGas(Canvas canvas, double vL, double vT, double vR, double vB) {
     final gas = Path()
-      ..addRect(Rect.fromLTRB(vL - 40, vT - 40, vR + 40, vB + 40))
-      ..addOval(Rect.fromCircle(
-          center: Offset(c.zoneX, c.zoneY), radius: c.zoneR))
+      ..addRect(Rect.fromLTRB(vL - 60, vT - 60, vR + 60, vB + 60))
+      ..addOval(
+          Rect.fromCircle(center: Offset(c.zoneX, c.zoneY), radius: c.zoneR))
       ..fillType = PathFillType.evenOdd;
-    canvas.drawPath(gas, Paint()..color = kGasFill);
+    canvas.drawPath(gas, _fill..color = kGasFill);
     canvas.drawCircle(
         Offset(c.zoneX, c.zoneY),
         c.zoneR,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 6
-          ..color = kGasEdge);
-    canvas.restore();
+        _stroke
+          ..color = kGasEdge.withValues(alpha: 0.35)
+          ..strokeWidth = 12);
+    canvas.drawCircle(Offset(c.zoneX, c.zoneY), c.zoneR,
+        _stroke..color = kSafeEdge..strokeWidth = 3);
+  }
 
-    // screen-space overlays: names + hp bars
+  // ---------------------------------------------------------------- labels
+  void _drawLabels(Canvas canvas, Size size, double camX, double camY,
+      double scale, bool Function(double, double, [double]) vis) {
     for (final p in c.players) {
       if (!p.alive || !p.ready) continue;
       final wp = _pos[p.id] ?? Offset(p.x, p.y);
-      if (!onScreen(wp.dx, wp.dy, kPlayerRadius * 2)) continue;
+      if (!vis(wp.dx, wp.dy, kPlayerRadius * 2)) continue;
       final sx = (wp.dx - camX) * scale + size.width / 2;
       final sy = (wp.dy - camY) * scale + size.height / 2;
       final top = sy - kPlayerRadius * scale - 18;
-      // hp bar
       const w = 46.0;
       final hpFrac = (p.hp / 100).clamp(0.0, 1.0);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromLTWH(sx - w / 2, top, w, 5), const Radius.circular(3)),
-        Paint()..color = Colors.black54,
+        _fill..color = Colors.black54,
       );
       canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromLTWH(sx - w / 2, top, w * hpFrac, 5),
             const Radius.circular(3)),
-        Paint()
+        _fill
           ..color = hpFrac > 0.5
               ? const Color(0xFF57E389)
               : hpFrac > 0.25
                   ? kAccent
                   : kAccent2,
       );
-      // name
       final tp = TextPainter(
         text: TextSpan(
           text: p.id == c.myId ? 'YOU' : p.name,
@@ -1892,6 +2701,17 @@ class _ArenaPainter extends CustomPainter {
       )..layout();
       tp.paint(canvas, Offset(sx - tp.width / 2, top - 15));
     }
+  }
+
+  void _drawVignette(Canvas canvas, Size size) {
+    canvas.drawRect(
+        Offset.zero & size,
+        Paint()
+          ..shader = ui.Gradient.radial(
+              Offset(size.width / 2, size.height / 2),
+              math.max(size.width, size.height) * 0.75,
+              [const Color(0x00000000), const Color(0x99000000)],
+              [0.55, 1.0]));
   }
 
   @override

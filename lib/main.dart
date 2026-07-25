@@ -42,10 +42,22 @@ Future<void> _useHighRefreshRate() async {
   }
 }
 
+/// LANDSCAPE ONLY, like every serious mobile shooter. A portrait option only
+/// ever split the controls, the HUD and the camera into two half-tuned layouts
+/// — the game is built and balanced for sideways play, so that's what it does.
+Future<void> applyOrientation() async {
+  await SystemChrome.setPreferredOrientations(const [
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _useHighRefreshRate();
   await Profile.instance.load();
+  Profile.instance.touchStreak(); // advance the daily login streak
+  await applyOrientation();
   Sfx.init(); // fire-and-forget: generates + loads sounds in the background
   // Edge-to-edge with transparent bars: the game fills the screen and stays
   // rock-steady (immersive/sticky mode flickers when you touch the bottom edge
@@ -149,6 +161,15 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.keyF) {
       game.activateSkill();
     }
+    if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.keyQ) {
+      game.swapWeapon(); // switch between your two guns
+    }
+    if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.keyE) {
+      game.takePickup(); // grab the crate you're standing on
+    }
+    if (e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.keyV) {
+      game.deployWall(); // drop a shield wall in front of you
+    }
     return KeyEventResult.handled;
   }
 
@@ -161,6 +182,9 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    // Which saved control layout is live (portrait and landscape have their own).
+    final sz = MediaQuery.of(context).size;
+    Profile.instance.hudLandscape = sz.width > sz.height;
     return Scaffold(
       body: Focus(
         focusNode: _focus,

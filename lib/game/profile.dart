@@ -22,6 +22,24 @@ class Profile {
   int matchMode = 0; // index into kMatchModes
   int hero = 0; // index into kHeroes
   int mapChoice = 0; // 0 = random each match; otherwise kMapThemes[mapChoice - 1]
+  int difficulty = 1; // index into kDifficulties (1 = NORMAL)
+
+  /// When ON, walking over a gun with both slots full swaps it in like the old
+  /// build did. OFF (the default) means loot NEVER takes the gun out of your
+  /// hands — you tap PICK UP if you want it. This is the fix for "I crossed a
+  /// shotgun and lost my machine gun mid-fight".
+  bool autoSwapWeapons = false;
+
+  // ---- display ----
+  /// 0 = LANDSCAPE (default — the game is built for it), 1 = PORTRAIT, 2 = AUTO.
+  int orientation = 0;
+  /// Screen-shake strength, 0 (off) .. 1 (full). Default is deliberately mild:
+  /// enough punch to feel the gun, not enough to throw your aim off.
+  double shake = 0.5;
+  /// Index into kQualities. Scales scenery detail, particle counts and how
+  /// many permanent marks stay on the ground — the dial to turn if the game
+  /// ever feels like it is stuttering on your phone.
+  int quality = 1;
 
   // ---- on-screen controller ----
   double stickScale = 1.0; // 0.8 .. 1.35
@@ -29,21 +47,64 @@ class Profile {
   bool leftHanded = false; // swap move/aim sides
 
   // Drag-customizable HUD layout: control key -> [xFrac, yFrac] centre on screen.
-  // Empty => use the default. Keys: move, aim, nade, skill, reload, fire.
+  // Empty => use the default. Keys: move, aim, nade, skill, swap, pick, reload,
+  // fire, hp.
+  //
+  // Portrait and landscape get SEPARATE layouts — a thumb reaches very
+  // different places when the phone is sideways, so one shared layout would
+  // put the sticks in the wrong spot in one of the two. Landscape entries are
+  // stored under "<key>@l"; [hudLandscape] selects which set is live.
   final Map<String, List<double>> hudPos = {};
+  bool hudLandscape = false;
+
   static const Map<String, List<double>> kDefaultHud = {
     'move': [0.14, 0.82],
     'aim': [0.86, 0.82],
     'skill': [0.90, 0.55],
     'nade': [0.74, 0.68],
+    'swap': [0.28, 0.74],
+    'wall': [0.74, 0.54],
+    'pick': [0.50, 0.66],
     'reload': [0.58, 0.87],
     'fire': [0.44, 0.87],
     'hp': [0.30, 0.62],
   };
+
+  /// Sideways layout: sticks hug the bottom corners, actions stack up the right
+  /// edge within thumb reach, readouts sit low-left where nothing is happening.
+  static const Map<String, List<double>> kDefaultHudLandscape = {
+    'move': [0.11, 0.74],
+    'aim': [0.89, 0.74],
+    // sideways screens are short: the minimap owns the top-right corner, the
+    // sticks own the bottom, so the action buttons sit in the band between
+    'skill': [0.94, 0.47],
+    'nade': [0.83, 0.45],
+    'swap': [0.66, 0.87],
+    'wall': [0.70, 0.45],
+    'pick': [0.50, 0.62],
+    'reload': [0.52, 0.88],
+    'fire': [0.38, 0.88],
+    'hp': [0.13, 0.40],
+  };
+
+  static Map<String, List<double>> defaultHudFor(bool landscape) =>
+      landscape ? kDefaultHudLandscape : kDefaultHud;
+
+  /// Storage key for [k] in the layout currently on screen.
+  String _hk(String k) => hudLandscape ? '$k@l' : k;
+
   List<double> hudPosOf(String k) =>
-      hudPos[k] ?? kDefaultHud[k] ?? const [0.5, 0.5];
+      hudPos[_hk(k)] ??
+      defaultHudFor(hudLandscape)[k] ??
+      kDefaultHud[k] ??
+      const [0.5, 0.5];
+
   void setHudPos(String k, double x, double y) =>
-      hudPos[k] = [x.clamp(0.05, 0.95), y.clamp(0.10, 0.92)];
+      hudPos[_hk(k)] = [x.clamp(0.05, 0.95), y.clamp(0.08, 0.93)];
+
+  /// Wipes only the layout for the orientation being edited.
+  void resetHudPositions() =>
+      hudPos.removeWhere((k, _) => k.endsWith('@l') == hudLandscape);
 
   // Per-control size + opacity (BGMI-style). 1.0 = default size / fully opaque.
   //
@@ -59,6 +120,9 @@ class Profile {
     'aim': [0.60, 1.15],
     'skill': [0.75, 1.40],
     'nade': [0.80, 1.40],
+    'swap': [0.75, 1.40],
+    'wall': [0.80, 1.40],
+    'pick': [0.75, 1.40],
     'reload': [0.75, 1.40],
     'fire': [0.75, 1.40],
     'hp': [0.50, 1.50],
@@ -104,6 +168,35 @@ class Profile {
   // ---- daily missions ----
   List<Mission> missions = [];
   int missionDay = 0;
+
+  // ---- daily login streak (a reason to come back tomorrow) ----
+  int streak = 0; // consecutive days played
+  int streakDay = 0; // day index the streak was last advanced
+  int streakClaimedDay = -1; // day index the bonus was last collected
+
+  /// Coins for today's login. Grows with the streak and caps at day 7 so it
+  /// stays a habit, not a payday.
+  int get streakReward => 40 + 30 * (streak.clamp(1, 7) - 1);
+  bool get streakReady => streakClaimedDay != _today;
+
+  /// Advances (or resets) the streak for today. Call on app start.
+  void touchStreak() {
+    final t = _today;
+    if (streakDay == t) return;
+    streak = (streakDay == t - 1) ? streak + 1 : 1;
+    streakDay = t;
+    save();
+  }
+
+  /// Collect today's login bonus. Returns null if already claimed.
+  MatchRewards? claimStreak() {
+    if (!streakReady) return null;
+    streakClaimedDay = _today;
+    final c = streakReward;
+    coins += c;
+    save();
+    return MatchRewards(xp: 0, coins: c, levels: 0);
+  }
 
   // ---- shop / ownership ----
   // Item ids: 'o<i>' outfit colour, 'a<i>' accessory, 'w<index>' start weapon.
@@ -165,6 +258,11 @@ class Profile {
 
   SharedPreferences? _prefs;
 
+  Quality get gfx => kQualities[quality.clamp(0, kQualities.length - 1)];
+
+  Difficulty get diff =>
+      kDifficulties[difficulty.clamp(0, kDifficulties.length - 1)];
+
   Color get outfitColor => Color(kOutfitColors[outfit % kOutfitColors.length]);
   Color get skinColor => Color(kSkinTones[skin % kSkinTones.length]);
   String get accessoryName => kAccessoryNames[accessory % kAccessoryNames.length];
@@ -216,6 +314,14 @@ class Profile {
       matchMode = p.getInt('matchMode') ?? 0;
       hero = p.getInt('hero') ?? 0;
       mapChoice = p.getInt('mapChoice') ?? 0;
+      difficulty = (p.getInt('difficulty') ?? 1).clamp(0, kDifficulties.length - 1);
+      autoSwapWeapons = p.getBool('autoSwap') ?? false;
+      orientation = (p.getInt('orientation') ?? 0).clamp(0, 2);
+      shake = (p.getDouble('shake') ?? 0.5).clamp(0.0, 1.0);
+      quality = (p.getInt('quality') ?? 1).clamp(0, kQualities.length - 1);
+      streak = p.getInt('streak') ?? 0;
+      streakDay = p.getInt('streakDay') ?? 0;
+      streakClaimedDay = p.getInt('streakClaimed') ?? -1;
       stickScale = p.getDouble('stickScale') ?? 1.0;
       stickOpacity = p.getDouble('stickOpacity') ?? 1.0;
       leftHanded = p.getBool('leftHanded') ?? false;
@@ -291,6 +397,14 @@ class Profile {
       await p.setInt('matchMode', matchMode);
       await p.setInt('hero', hero);
       await p.setInt('mapChoice', mapChoice);
+      await p.setInt('difficulty', difficulty);
+      await p.setBool('autoSwap', autoSwapWeapons);
+      await p.setInt('orientation', orientation);
+      await p.setDouble('shake', shake);
+      await p.setInt('quality', quality);
+      await p.setInt('streak', streak);
+      await p.setInt('streakDay', streakDay);
+      await p.setInt('streakClaimed', streakClaimedDay);
       await p.setDouble('stickScale', stickScale);
       await p.setDouble('stickOpacity', stickOpacity);
       await p.setBool('leftHanded', leftHanded);

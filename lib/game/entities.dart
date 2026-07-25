@@ -4,15 +4,23 @@ import 'config.dart';
 import 'mathx.dart';
 
 // ============================ Obstacles =======================
-enum ObstacleKind { wall, crate, bush }
+/// `shield` is a player-deployed wall — it blocks bullets and bodies exactly
+/// like real cover, but it has hit points and a timer, so it's cover you have
+/// to spend and can be shot away.
+enum ObstacleKind { wall, crate, bush, shield }
 
 class Obstacle {
   final ObstacleKind kind;
   final double x, y, w, h;
-  const Obstacle(this.kind, this.x, this.y, this.w, this.h);
+  double hp; // shield walls only
+  double life; // seconds left before a shield wall dissolves
+  final int ownerId;
+  Obstacle(this.kind, this.x, this.y, this.w, this.h,
+      {this.hp = 0, this.life = 0, this.ownerId = -1});
 
   bool get blocks => kind != ObstacleKind.bush; // bushes never block
   bool get conceals => kind == ObstacleKind.bush;
+  bool get isShield => kind == ObstacleKind.shield;
   Rect get rect => Rect.fromLTWH(x, y, w, h);
 
   bool contains(double px, double py) =>
@@ -20,7 +28,7 @@ class Obstacle {
 }
 
 // ============================ Loot ============================
-enum LootKind { weapon, medkit, grenade }
+enum LootKind { weapon, medkit, grenade, vest, helmet, wall }
 
 class Loot {
   final LootKind kind;
@@ -30,6 +38,7 @@ class Loot {
   double bob = randRange(0, kTau);
   bool taken = false;
   double readyAt = 0; // world time before it can be picked up (freshly dropped)
+  bool airdrop = false; // supply-drop crate: rare gun, flagged on the minimap
 
   Loot(this.kind, this.pos, {this.weapon, this.heal = 0});
 }
@@ -96,22 +105,62 @@ class Character {
   int kills = 0;
   int placement = 0;
   double hitFlash = 0; // white flash timer when damaged
+  double stepT = 0; // time to the next boot print
+  bool stepFoot = false; // which foot the next print belongs to
 
   // appearance (customization) — color above is the outfit/suit colour
   Color skin = const Color(0xFFF4CBA2);
   int accessory = 0; // index into kAccessoryNames
   int hero = 0; // index into kHeroes — drives signature gear (shield, pack…)
 
-  // weapon state
-  WeaponId weaponId = WeaponId.pistol;
-  int ammo = kWeapons[WeaponId.pistol]!.mag;
+  // ---- weapon state: TWO SLOTS, like every proper shooter ----
+  //
+  // Picking a gun off the ground can only ever fill an EMPTY slot. It never
+  // rips the gun out of your hands mid-fight — swapping is a deliberate tap on
+  // the switch button (or Q on desktop). `slots[slot]` is what you're holding.
+  final List<WeaponId?> slots = [WeaponId.pistol, null];
+  int slot = 0; // 0 or 1 — which slot is in your hands
+  final List<int> slotAmmo = [kWeapons[WeaponId.pistol]!.mag, 0];
   double reloadT = 0; // remaining reload seconds (>0 = reloading)
   double cooldown = 0; // seconds until next shot allowed
   double muzzle = 0; // muzzle-flash timer
+  double swapT = 0; // brief "raising the gun" delay after switching
 
   // grenades
   int grenades = kGrenadeStart;
   double throwCd = 0; // seconds until next throw allowed
+
+  // ---- armour: soaks a share of incoming damage until it breaks ----
+  double vest = 0; // remaining vest durability (0 = none)
+  double helmet = 0; // remaining helmet durability
+  double armourFlash = 0; // brief spark when armour eats a hit
+
+  // ---- deployable shield walls (gloo-wall style cover) ----
+  int walls = kShieldWallStart;
+  double wallCd = 0;
+
+  /// Fraction of incoming damage that gets through the armour, and wears it
+  /// down in the process. Armour absorbs, it doesn't make you invincible.
+  double soak(double dmg) {
+    var cut = 0.0;
+    if (vest > 0) cut += kVestReduction;
+    if (helmet > 0) cut += kHelmetReduction;
+    if (cut <= 0) return dmg;
+    final absorbed = dmg * cut;
+    // split the wear between the pieces that are actually carrying it
+    if (vest > 0 && helmet > 0) {
+      vest -= absorbed * 0.6;
+      helmet -= absorbed * 0.4;
+    } else if (vest > 0) {
+      vest -= absorbed;
+    } else {
+      helmet -= absorbed;
+    }
+    if (vest < 0) vest = 0;
+    if (helmet < 0) helmet = 0;
+    armourFlash = 0.12;
+    return dmg - absorbed;
+  }
 
   // hero skill state (player)
   double skillCd = 0; // cooldown remaining
@@ -126,6 +175,7 @@ class Character {
   double aiStuck = 0;
   double aiScan = 0; // time until next (expensive) enemy re-scan
   double aiSkill = 0.5; // 0..1 accuracy
+  double aiDamage = 1.0; // damage multiplier on shots this bot fires
   double aiPreferred = 240; // preferred engagement distance
   Character? aiEnemy;
   final Vector2 _lastPos = Vector2.zero();
@@ -135,8 +185,79 @@ class Character {
     _lastPos.setFrom(pos);
   }
 
+  // ---- weapon accessors -------------------------------------------------
+  WeaponId get weaponId => slots[slot] ?? WeaponId.pistol;
+  set weaponId(WeaponId w) {
+    slots[slot] = w;
+    slotAmmo[slot] = kWeapons[w]!.mag;
+  }
+
   Weapon get weapon => kWeapons[weaponId]!;
   bool get reloading => reloadT > 0;
+  bool get swapping => swapT > 0;
+
+  int get ammo => slotAmmo[slot];
+  set ammo(int v) => slotAmmo[slot] = v;
+
+  WeaponId? get otherWeapon => slots[1 - slot];
+  bool get hasEmptySlot => slots[0] == null || slots[1] == null;
+
+  /// Puts [w] in the first empty slot. Returns false if both are taken.
+  bool addWeapon(WeaponId w) {
+    final i = slots.indexWhere((s) => s == null);
+    if (i < 0) return false;
+    slots[i] = w;
+    slotAmmo[i] = kWeapons[w]!.mag;
+    return true;
+  }
+
+  /// Replaces the gun in your hands with [w] and returns the one dropped.
+  WeaponId? replaceWeapon(WeaponId w) {
+    final old = slots[slot];
+    slots[slot] = w;
+    slotAmmo[slot] = kWeapons[w]!.mag;
+    reloadT = 0;
+    swapT = 0.25;
+    return old;
+  }
+
+  /// Switch to the other slot. No-op when there's nothing to switch to.
+  bool switchSlot() {
+    final other = 1 - slot;
+    if (slots[other] == null) return false;
+    slot = other;
+    reloadT = 0; // switching cancels a reload, as it should
+    cooldown = 0;
+    swapT = 0.22; // small raise time so it isn't a free instant-DPS combo
+    return true;
+  }
+
+  /// Hold whichever of the two slots is the better gun (bots only — a human
+  /// picks for themselves).
+  void equipBest() {
+    final a = slots[0], b = slots[1];
+    if (a != null && b != null) {
+      slot = weaponScore(a) >= weaponScore(b) ? 0 : 1;
+    } else {
+      slot = a != null ? 0 : 1;
+    }
+  }
+
+  /// Starting loadout: [primary] in hand, pistol as the backup.
+  void equipLoadout(WeaponId primary) {
+    slots[0] = primary;
+    slotAmmo[0] = kWeapons[primary]!.mag;
+    if (primary == WeaponId.pistol) {
+      slots[1] = null;
+      slotAmmo[1] = 0;
+    } else {
+      slots[1] = WeaponId.pistol;
+      slotAmmo[1] = kWeapons[WeaponId.pistol]!.mag;
+    }
+    slot = 0;
+    reloadT = 0;
+    swapT = 0;
+  }
 
   /// distance the character has moved since last stuck-check sample
   double sampleProgress() {

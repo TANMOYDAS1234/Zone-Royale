@@ -6,57 +6,110 @@ import 'dart:ui' show Offset;
 
 import 'package:flutter/foundation.dart';
 
-/// One player as seen in a server snapshot.
+/// How far behind the newest snapshot we render other players, in ms. Holding a
+/// small buffer and interpolating *between* two known positions is what makes
+/// online movement look smooth: without it every dropped or late packet shows
+/// up as a stutter. ~90ms costs almost nothing you can feel and absorbs normal
+/// mobile jitter.
+const int kInterpDelayMs = 90;
+
+/// One player as seen in a server snapshot. The wire format is a flat int
+/// array (see the server's `_broadcastState`) — names arrive separately in the
+/// roster message, so they aren't repeated 30 times a second.
 class NetPlayer {
   final int id;
   final double x, y, aim;
-  final int hp, kills, wins, wi, nades, cd;
-  final bool alive, shield, dash, bot, ready;
+  final int hp, kills, wins, wi, wi2, nades, cd, ammo;
+  final int vest, helmet, walls; // armour % and shield-wall charges
+  final bool alive, ready, shield, dash, bot, reloading;
   final String name;
-  const NetPlayer(this.id, this.x, this.y, this.aim, this.hp, this.kills,
-      this.wins, this.wi, this.nades, this.cd, this.alive, this.shield,
-      this.dash, this.bot, this.ready, this.name);
+  const NetPlayer(
+      {required this.id,
+      required this.x,
+      required this.y,
+      required this.aim,
+      required this.hp,
+      required this.kills,
+      required this.wins,
+      required this.wi,
+      required this.wi2,
+      required this.nades,
+      required this.cd,
+      required this.ammo,
+      required this.vest,
+      required this.helmet,
+      required this.walls,
+      required this.alive,
+      required this.ready,
+      required this.shield,
+      required this.dash,
+      required this.bot,
+      required this.reloading,
+      required this.name});
 
-  factory NetPlayer.from(Map m) => NetPlayer(
-        (m['id'] as num).toInt(),
-        (m['x'] as num).toDouble(),
-        (m['y'] as num).toDouble(),
-        (m['aim'] as num).toDouble(),
-        (m['hp'] as num).toInt(),
-        (m['kills'] as num?)?.toInt() ?? 0,
-        (m['wins'] as num?)?.toInt() ?? 0,
-        (m['wi'] as num?)?.toInt() ?? 5,
-        (m['nades'] as num?)?.toInt() ?? 0,
-        (m['cd'] as num?)?.toInt() ?? 0,
-        m['alive'] == true,
-        m['sh'] == true,
-        m['dsh'] == true,
-        m['bot'] == true,
-        m['rdy'] == true,
-        (m['name'] as String?) ?? '',
-      );
-}
-
-class NetBullet {
-  final double x, y, vx, vy;
-  const NetBullet(this.x, this.y, [this.vx = 0, this.vy = 0]);
-
-  /// Position [age] seconds after the snapshot it came from.
-  Offset at(double age) => Offset(x + vx * age, y + vy * age);
+  /// [a] is the packed array:
+  /// [id, x, y, aim*100, hp, flags, kills, wins, wi, wi2, nades, cd, ammo,
+  ///  vest%, helmet%, walls]
+  factory NetPlayer.unpack(List a, String name) {
+    int at(int i) => i < a.length ? (a[i] as num).toInt() : 0;
+    final flags = at(5);
+    return NetPlayer(
+      id: at(0),
+      x: at(1).toDouble(),
+      y: at(2).toDouble(),
+      aim: at(3) / 100.0,
+      hp: at(4),
+      kills: at(6),
+      wins: at(7),
+      wi: at(8),
+      wi2: at(9),
+      nades: at(10),
+      cd: at(11),
+      ammo: at(12),
+      vest: at(13),
+      helmet: at(14),
+      walls: at(15),
+      alive: flags & 1 != 0,
+      ready: flags & 2 != 0,
+      shield: flags & 4 != 0,
+      dash: flags & 8 != 0,
+      bot: flags & 16 != 0,
+      reloading: flags & 32 != 0,
+      name: name,
+    );
+  }
 }
 
 /// A rectangular obstacle (building/cover). x,y is the centre.
+/// kind: 0 building · 1 crate/rock · 2 bush (see-through, no collision).
 class NetObs {
   final double x, y, w, h;
-  const NetObs(this.x, this.y, this.w, this.h);
+  final int kind;
+  const NetObs(this.x, this.y, this.w, this.h, [this.kind = 0]);
+  bool get blocks => kind != 2;
 }
 
-/// A ground pickup: weapon crate ('w', with weapon index wi) or medkit ('m').
+/// A ground pickup. kind: 0 medkit · 1 weapon crate · 2 airdrop.
 class NetLoot {
   final double x, y;
-  final String kind;
+  final int kind;
   final int wi;
   const NetLoot(this.x, this.y, this.kind, this.wi);
+}
+
+/// A player-deployed shield wall — real cover, with hit points.
+class NetWall {
+  final double x, y, w, h, health;
+  const NetWall(this.x, this.y, this.w, this.h, this.health);
+}
+
+/// A shot fired somewhere in the world this tick. The client turns these into
+/// local muzzle flashes and tracers using its own weapon table, so bullets fly
+/// perfectly smoothly instead of being streamed position-by-position.
+class NetShot {
+  final double x, y, aim;
+  final int wi;
+  const NetShot(this.x, this.y, this.aim, this.wi);
 }
 
 /// Thin client for the Zone Royale authoritative server. Connects over a plain
@@ -74,17 +127,29 @@ class NetClient {
   String? error;
 
   List<NetPlayer> players = const [];
-  List<NetBullet> bullets = const [];
   List<NetObs> obstacles = const [];
   List<NetLoot> loot = const [];
-  List<NetBullet> nades = const []; // flying grenade positions
+  List<Offset> nades = const [];
+  /// Deployed shield walls: centre x/y, size, and how intact they are (0..1).
+  List<NetWall> walls = const [];
+
+  /// Drained by the renderer each frame.
+  final List<NetShot> shotQueue = [];
+  final List<Offset> boomQueue = [];
+  final List<Offset> dropQueue = [];
+
+  final Map<int, String> _names = {};
+  final Map<int, int> _heroes = {};
+  final Map<int, bool> _bots = {};
+
+  int heroOf(int id) => _heroes[id] ?? 0;
 
   // shrinking gas zone
   double zoneX = 1600, zoneY = 1600, zoneR = 3000;
 
   // room match settings (from the host's config)
   String map = 'RANDOM';
-  String weapon = 'RIFLE';
+  String weapon = 'ALL_ARMS';
   int rounds = 1;
   int round = 1;
   int maxPlayers = 10;
@@ -99,6 +164,13 @@ class NetClient {
   int botDifficulty = 1;
   bool started = false; // has anyone deployed yet?
 
+  /// True when the host we connected to is running an older build than this
+  /// app (it streams the pre-2.0 snapshot format). Online play needs the
+  /// matching server — redeploy `server/` and it clears itself.
+  bool serverOutdated = false;
+
+  bool get isHost => myId == hostId;
+
   /// Real players only — bots don't occupy the room's player limit.
   int get humanCount {
     var n = 0;
@@ -111,16 +183,17 @@ class NetClient {
   // ---- snapshot interpolation (renders smoothly between server ticks) ----
   final Map<int, List<double>> _prevP = {}; // id -> [x, y, aim]
   final Map<int, List<double>> _currP = {};
-  int _snapAt = 0;
-  double _snapDt = 33;
+  int _prevAt = 0, _currAt = 0;
 
-  /// Interpolated [x, y, aim] for a player, or null if unknown.
+  /// Interpolated [x, y, aim] for a player, or null if unknown. Renders
+  /// [kInterpDelayMs] in the past so a late packet doesn't cause a hitch.
   List<double>? lerpOf(int id) {
     final cur = _currP[id];
     if (cur == null) return null;
     final pv = _prevP[id] ?? cur;
-    final t = ((DateTime.now().millisecondsSinceEpoch - _snapAt) / _snapDt)
-        .clamp(0.0, 1.0);
+    final span = (_currAt - _prevAt).clamp(1, 400);
+    final renderAt = DateTime.now().millisecondsSinceEpoch - kInterpDelayMs;
+    final t = ((renderAt - _prevAt) / span).clamp(0.0, 1.35);
     double a = pv[2], b = cur[2];
     var d = b - a;
     while (d > math.pi) {
@@ -136,20 +209,10 @@ class NetClient {
     ];
   }
 
-  /// Seconds since the last snapshot — used to extrapolate projectiles.
-  double get snapAge => _snapAt == 0
-      ? 0
-      : ((DateTime.now().millisecondsSinceEpoch - _snapAt) / 1000.0)
-          .clamp(0.0, 0.15);
-
   void _recordSnapshot() {
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (_snapAt != 0) {
-      // exponential moving average: network jitter shouldn't wobble the lerp
-      final measured = (now - _snapAt).clamp(16, 250).toDouble();
-      _snapDt = _snapDt * 0.8 + measured * 0.2;
-    }
-    _snapAt = now;
+    _prevAt = _currAt == 0 ? now - 33 : _currAt;
+    _currAt = now;
     _prevP
       ..clear()
       ..addAll(_currP);
@@ -276,6 +339,7 @@ class NetClient {
           break;
         case 'roomcfg':
           roomCode = (m['code'] as String?) ?? roomCode;
+          world = (m['world'] as num?)?.toDouble() ?? world;
           map = (m['map'] as String?) ?? map;
           weapon = (m['weapon'] as String?) ?? weapon;
           rounds = (m['rounds'] as num?)?.toInt() ?? rounds;
@@ -298,8 +362,24 @@ class NetClient {
                   (o['y'] as num).toDouble(),
                   (o['w'] as num).toDouble(),
                   (o['h'] as num).toDouble(),
+                  (o['k'] as num?)?.toInt() ?? 0,
                 )
             ];
+          }
+          _bump();
+          break;
+        case 'roster':
+          final list = m['players'];
+          if (list is List) {
+            _names.clear();
+            _heroes.clear();
+            _bots.clear();
+            for (final e in list) {
+              final id = (e['id'] as num).toInt();
+              _names[id] = (e['name'] as String?) ?? '';
+              _heroes[id] = (e['hero'] as num?)?.toInt() ?? 0;
+              _bots[id] = e['bot'] == true;
+            }
           }
           _bump();
           break;
@@ -315,6 +395,11 @@ class NetClient {
           roundBanner = null;
           _bump();
           break;
+        case 'drop':
+          dropQueue.add(Offset((m['x'] as num).toDouble(),
+              (m['y'] as num).toDouble()));
+          _bump();
+          break;
         case 'pong':
           final sent = (m['t'] as num?)?.toInt();
           if (sent != null) {
@@ -328,50 +413,78 @@ class NetClient {
           _fail('Room is full (${m['max']} players max).');
           break;
         case 'state':
-          players = [
-            for (final p in (m['players'] as List)) NetPlayer.from(p as Map)
-          ];
-          _recordSnapshot();
-          round = (m['round'] as num?)?.toInt() ?? round;
-          rounds = (m['rounds'] as num?)?.toInt() ?? rounds;
-          bullets = [
-            for (final b in (m['bullets'] as List))
-              NetBullet(
-                (b['x'] as num).toDouble(),
-                (b['y'] as num).toDouble(),
-                (b['vx'] as num?)?.toDouble() ?? 0,
-                (b['vy'] as num?)?.toDouble() ?? 0,
-              )
-          ];
-          final nd = m['nades'];
-          if (nd is List) {
-            nades = [
-              for (final g in nd)
-                NetBullet(
-                  (g['x'] as num).toDouble(),
-                  (g['y'] as num).toDouble(),
-                  (g['vx'] as num?)?.toDouble() ?? 0,
-                  (g['vy'] as num?)?.toDouble() ?? 0,
-                )
+          final ps = m['p'];
+          // An old server still streams `players` objects. Say so plainly
+          // instead of showing an empty arena that looks like a bug.
+          if (ps is! List && m['players'] is List) {
+            serverOutdated = true;
+            _bump();
+            break;
+          }
+          if (ps is List) {
+            players = [
+              for (final a in ps)
+                NetPlayer.unpack(
+                    a as List, _names[(a[0] as num).toInt()] ?? 'PLAYER')
             ];
           }
-          final lt = m['loot'];
+          _recordSnapshot();
+          round = (m['r'] as num?)?.toInt() ?? round;
+          rounds = (m['rs'] as num?)?.toInt() ?? rounds;
+          final z = m['z'];
+          if (z is List && z.length >= 3) {
+            zoneX = (z[0] as num).toDouble();
+            zoneY = (z[1] as num).toDouble();
+            zoneR = (z[2] as num).toDouble();
+          }
+          final lt = m['l'];
           if (lt is List) {
             loot = [
               for (final l in lt)
-                NetLoot(
-                  (l['x'] as num).toDouble(),
-                  (l['y'] as num).toDouble(),
-                  (l['k'] as String?) ?? 'm',
-                  (l['wi'] as num?)?.toInt() ?? -1,
-                )
+                NetLoot((l[0] as num).toDouble(), (l[1] as num).toDouble(),
+                    (l[2] as num).toInt(), (l[3] as num).toInt())
             ];
           }
-          final z = m['zone'];
-          if (z is Map) {
-            zoneX = (z['x'] as num).toDouble();
-            zoneY = (z['y'] as num).toDouble();
-            zoneR = (z['r'] as num).toDouble();
+          final wl = m['w'];
+          walls = wl is List
+              ? [
+                  for (final w in wl)
+                    NetWall(
+                      (w[0] as num).toDouble(),
+                      (w[1] as num).toDouble(),
+                      (w[2] as num).toDouble(),
+                      (w[3] as num).toDouble(),
+                      (w[4] as num).toDouble() / 100.0,
+                    )
+                ]
+              : const [];
+          final g = m['g'];
+          if (g is List) {
+            nades = [
+              for (final n in g)
+                Offset((n[0] as num).toDouble(), (n[1] as num).toDouble())
+            ];
+          }
+          final e = m['e'];
+          if (e is List) {
+            for (final s in e) {
+              shotQueue.add(NetShot(
+                (s[0] as num).toDouble(),
+                (s[1] as num).toDouble(),
+                (s[2] as num).toDouble() / 100.0,
+                (s[3] as num).toInt(),
+              ));
+            }
+            if (shotQueue.length > 120) {
+              shotQueue.removeRange(0, shotQueue.length - 120);
+            }
+          }
+          final bx = m['x'];
+          if (bx is List) {
+            for (final b in bx) {
+              boomQueue.add(
+                  Offset((b[0] as num).toDouble(), (b[1] as num).toDouble()));
+            }
           }
           // everyone respawned => a new round started; clear the banners
           final allAlive = players.isNotEmpty && players.every((p) => p.alive);
@@ -411,8 +524,21 @@ class NetClient {
     } catch (_) {}
   }
 
+  /// Host-only: push the room rules again from the lobby so a settings change
+  /// applies without leaving and rejoining.
+  void sendConfig(Map<String, dynamic> config) {
+    try {
+      _ws?.add(jsonEncode({'type': 'cfg', 'config': config}));
+    } catch (_) {}
+  }
+
   void sendInput(double mx, double my, double aim, bool fire,
-      {bool nade = false, bool skill = false}) {
+      {bool nade = false,
+      bool skill = false,
+      bool reload = false,
+      bool swap = false,
+      bool take = false,
+      bool wall = false}) {
     final ws = _ws;
     if (ws == null) return;
     try {
@@ -424,6 +550,10 @@ class NetClient {
         'fire': fire,
         if (nade) 'nade': true,
         if (skill) 'skill': true,
+        if (reload) 'reload': true,
+        if (swap) 'swap': true,
+        if (take) 'take': true,
+        if (wall) 'wall': true,
       }));
     } catch (_) {}
   }

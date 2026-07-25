@@ -3,9 +3,103 @@ import 'dart:ui';
 // ============================ World ============================
 const double kWorld = 3200; // square world edge length (world units)
 const double kViewHeight = 1320; // world units shown vertically (drives camera zoom) — wider POV so you see enemies coming
+/// Vertical world units shown when the phone is held sideways. Landscape is
+/// much wider than it is tall, so the *vertical* window has to shrink or the
+/// visible area explodes and operators become ants. 720 keeps roughly the same
+/// on-screen character size as portrait while showing far more left/right —
+/// exactly what you want in a twin-stick shooter.
+const double kViewHeightLandscape = 620;
 const double kMaxHp = 100;
 const double kPlayerRadius = 20;
 const int kBotCount = 9;
+
+// ============================ Feel / juice =====================
+/// Base screen-shake amounts. These are *trauma* units (0..1-ish): the camera
+/// offset is trauma² × [kShakeMaxPx], so small values stay subtle and only big
+/// hits really kick. Kept deliberately low — shake that fights your aim is bad
+/// shake. The player also scales all of it with the SCREEN SHAKE slider.
+const double kShakeMaxPx = 13; // px offset at full trauma (before user scale)
+const double kShakeFireLight = 0.10; // SMG / rifle / pistol
+const double kShakeFireHeavy = 0.20; // shotgun
+const double kShakeFireSniper = 0.26;
+const double kShakeHurt = 0.16;
+const double kShakeBoom = 0.55;
+const double kShakeSkill = 0.14;
+
+// ============================ Solo difficulty ==================
+/// How hard the offline match is. This scales bot aim, damage, reaction and
+/// vision on top of the level-based ranked curve, so a new player can enjoy the
+/// game and a veteran can still get wrecked on HARDCORE.
+class Difficulty {
+  final String id;
+  final String name;
+  final String tagline;
+  final double skill; // multiplier on bot aim skill
+  final double damage; // multiplier on damage bots deal
+  final double react; // multiplier on bot reaction delay (higher = slower)
+  final double vision; // multiplier on how far bots spot you
+  const Difficulty(this.id, this.name, this.tagline, this.skill, this.damage,
+      this.react, this.vision);
+}
+
+const List<Difficulty> kDifficulties = [
+  Difficulty('casual', 'CASUAL', 'Learn the ropes · relaxed bots', 0.72, 0.62,
+      1.6, 0.82),
+  Difficulty('normal', 'NORMAL', 'Fair fight · the default', 0.88, 0.80, 1.25,
+      0.93),
+  Difficulty('hardcore', 'HARDCORE', 'Sweaty lobbies · pro bots', 1.12, 1.0,
+      0.85, 1.08),
+];
+
+// ============================ Graphics quality =================
+/// Scales the cost of everything that is pure decoration — ground detail,
+/// particles, decals, weather. HIGH looks best; BATTERY keeps a cheap phone
+/// at a steady frame rate. This is the honest fix for "sometimes it feels
+/// laggy": a 120Hz panel plus hundreds of small draw calls is a lot to ask.
+class Quality {
+  final String id;
+  final String name;
+  final String tagline;
+  final double detail; // ground/scenery detail multiplier
+  final double fx; // particle count multiplier
+  final int decals; // how many permanent marks stay on the ground
+  final bool weather; // drifting dust/rain layer
+  const Quality(this.id, this.name, this.tagline, this.detail, this.fx,
+      this.decals, this.weather);
+}
+
+const List<Quality> kQualities = [
+  Quality('battery', 'SMOOTH', 'Fewer effects · best frame rate', 0.35, 0.45,
+      30, false),
+  Quality('balanced', 'BALANCED', 'The default mix', 0.75, 0.85, 90, true),
+  Quality('high', 'ULTRA', 'Everything on · newer phones', 1.25, 1.3, 170, true),
+];
+
+// ============================ Armour ==========================
+/// Helmet + vest, BGMI/Free-Fire style: they soak a share of incoming damage
+/// and break down as they take hits, so a geared-up player wins a straight
+/// fight but can still be worn down.
+const double kVestReduction = 0.30; // -30% body damage at full durability
+const double kHelmetReduction = 0.22; // -22% on top, while the helmet holds
+const double kVestDurability = 120; // damage the vest can absorb
+const double kHelmetDurability = 70;
+
+// ============================ Shield wall =====================
+/// A deployable cover slab (think Free Fire's gloo wall). Blocks bullets,
+/// blocks movement, and melts away after a while — the single best tool for
+/// resetting a losing fight, and the thing that makes close-range play tense.
+const double kShieldWallWidth = 132;
+const double kShieldWallThickness = 26;
+const double kShieldWallHp = 260;
+const double kShieldWallLife = 16; // seconds before it dissolves
+const int kShieldWallStart = 2; // carried at spawn
+const int kShieldWallMax = 4;
+const double kShieldWallCooldown = 1.2;
+
+// ============================ Airdrop =========================
+const double kAirdropFirstAt = 42; // seconds into the match for the first crate
+const double kAirdropEvery = 55; // seconds between later crates
+const int kAirdropMax = 3; // crates per match
 
 // ============================ Grenades ========================
 const int kGrenadeStart = 2; // carried at spawn
@@ -227,6 +321,43 @@ const List<MapEntry<WeaponId, int>> kLootTable = [
   MapEntry(WeaponId.sniper, 2),
 ];
 
+/// Only the heavy hitters drop from an airdrop — that's what makes the crate
+/// worth fighting over.
+const List<MapEntry<WeaponId, int>> kAirdropTable = [
+  MapEntry(WeaponId.sniper, 4),
+  MapEntry(WeaponId.minigun, 3),
+  MapEntry(WeaponId.lmg, 3),
+  MapEntry(WeaponId.dmr, 2),
+];
+
+/// Rough "how good is this gun" score (0..1). Used by bots to decide whether a
+/// ground weapon beats what they're carrying, and to rank your two slots.
+double weaponScore(WeaponId id) {
+  final w = kWeapons[id]!;
+  final dps = w.damage * w.pellets / w.fireInterval;
+  final sustained = dps * (w.mag / (w.mag + w.reloadTime / w.fireInterval));
+  return (sustained / 260 * 0.7 + w.range / 1300 * 0.3).clamp(0.0, 1.0);
+}
+
+/// Everything the server needs to simulate a gun exactly like the client does.
+/// Sent with the room config so online matches use the *real* weapon table
+/// instead of one hardcoded bullet.
+List<Map<String, dynamic>> weaponNetTable() => [
+      for (final id in kWeaponOrder)
+        {
+          'i': id.index,
+          'dmg': kWeapons[id]!.damage,
+          'speed': kWeapons[id]!.bulletSpeed,
+          'range': kWeapons[id]!.range,
+          'rof': kWeapons[id]!.fireInterval,
+          'mag': kWeapons[id]!.mag,
+          'rl': kWeapons[id]!.reloadTime,
+          'sp': kWeapons[id]!.spread,
+          'pel': kWeapons[id]!.pellets,
+          'auto': kWeapons[id]!.auto,
+        }
+    ];
+
 // ============================ Safe zone =======================
 class ZonePhase {
   final double wait; // seconds held before this shrink begins
@@ -275,6 +406,14 @@ const List<int> kOutfitColors = [
   0xFF223A5E, 0xFFEDEFF3,
   0xFF00E5A0, 0xFF7C4DFF, 0xFF00B0FF, 0xFFFF3D00, 0xFFD500F9, 0xFF8D6E63,
 ];
+/// Real names for the outfit colours — "Skin 7" told the player nothing about
+/// what they were buying.
+const List<String> kOutfitNames = [
+  'Cobalt', 'Crimson', 'Jungle', 'Amber', 'Orchid', 'Teal',
+  'Ember', 'Rose', 'Ash', 'Sand', 'Midnight', 'Arctic',
+  'Venom', 'Violet', 'Azure', 'Inferno', 'Magenta', 'Umber',
+];
+
 // Skin tones (last is a grey "cyborg" tone).
 const List<int> kSkinTones = [
   0xFFF4CBA2, 0xFFE0A970, 0xFFB87A4E, 0xFF7A5334, 0xFF9BB0BC,

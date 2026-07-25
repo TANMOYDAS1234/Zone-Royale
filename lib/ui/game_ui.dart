@@ -1,11 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../game/char_art.dart';
 import '../game/config.dart';
@@ -14,6 +10,28 @@ import '../game/royale_game.dart';
 import '../net/net_arena.dart';
 import 'brand.dart';
 import 'capture.dart';
+
+/// Page padding that keeps menu content in a readable centred column instead
+/// of stretching one thin list across a 20:9 landscape screen.
+EdgeInsets menuPad(BuildContext context,
+    {double top = 8, double bottom = 16, double side = 16, double max = 640}) {
+  final mq = MediaQuery.of(context);
+  final w = mq.size.width;
+  var gutter = w > max + side * 2 ? (w - max) / 2 : side;
+  // Held sideways, Android puts its navigation bar down one edge — keep the
+  // content clear of it (and of any camera cutout).
+  final inset = math.max(mq.padding.left, mq.padding.right);
+  if (gutter < side + inset) gutter = side + inset;
+  return EdgeInsets.fromLTRB(gutter, top, gutter, bottom);
+}
+
+/// Horizontal page padding for header rows, clear of system bars/cutouts.
+EdgeInsets headerPad(BuildContext context,
+    {double top = 4, double bottom = 6, double side = 18}) {
+  final mq = MediaQuery.of(context);
+  return EdgeInsets.fromLTRB(
+      side + mq.padding.left, top, side + mq.padding.right, bottom);
+}
 
 // ============================================================
 //  Reusable emblem (matches the app icon motif: closing zone)
@@ -81,7 +99,15 @@ class HudLayer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = MediaQuery.of(context).size;
+    final mq = MediaQuery.of(context);
+    final s = mq.size;
+    // portrait and landscape have their own saved control layouts
+    Profile.instance.hudLandscape = s.width > s.height;
+    // keep controls clear of the status/gesture bars
+    final safe = mq.padding;
+    game.safeRight = safe.right; // canvas overlays honour them too
+    game.safeLeft = safe.left;
+    game.safeTop = safe.top;
     final floating = game.isMobile || game.touchMode;
     return Stack(
       children: [
@@ -104,24 +130,79 @@ class HudLayer extends StatelessWidget {
           animation: game.ticker,
           builder: (_, _) => _info(context),
         ),
+        // Zone status sits dead-centre at the top in BOTH orientations —
+        // parking it under the minimap pushed it into the middle of the
+        // battlefield on a sideways screen.
+        Positioned(
+          top: MediaQuery.of(context).padding.top + 14,
+          left: 0,
+          right: 0,
+          child: IgnorePointer(
+            child: Center(child: _ticked(_zoneBanner)),
+          ),
+        ),
         // Touch controls float at the player's customised positions (see the
         // Controls editor). On desktop the skill button sits at a fixed spot and
         // grenade/reload live in the info row.
         if (floating) ...[
-          ..._sticks(s),
-          _place(s, 'skill', _ticked(_skillButton), 64, 64),
-          _place(s, 'nade', _ticked(_grenadeButton), 60, 60),
-          _place(s, 'reload', _ticked(_reloadButton), 120, 70),
-          _place(s, 'fire', _ticked(_fireModeButton), 64, 64),
+          ..._sticks(s, safe),
+          _place(s, 'skill', _ticked(_skillButton), 64, 64, safe),
+          _place(s, 'nade', _ticked(_grenadeButton), 60, 60, safe),
+          _place(s, 'swap', _ticked(_swapButton), 74, 66, safe),
+          _place(s, 'wall', _ticked(_wallButton), 60, 60, safe),
+          _place(s, 'reload', _ticked(_reloadButton), 130, 70, safe),
+          _place(s, 'fire', _ticked(_fireModeButton), 64, 64, safe),
           _place(s, 'hp',
-              _ticked(() => SizedBox(width: 150, child: _hpBar())), 150, 44),
-        ] else
+              _ticked(() => SizedBox(width: 150, child: _hpBar())), 150, 44, safe),
+          _place(s, 'pick', _ticked(_pickupButton), 168, 52, safe),
+        ] else ...[
           Positioned(
             right: 28,
             bottom: 200,
             child: _ticked(_skillButton),
           ),
+          _place(s, 'pick', _ticked(_pickupButton), 168, 52, safe),
+        ],
+        // killstreak shout — the thing people screenshot
+        IgnorePointer(child: _ticked(() => _streakBanner(s))),
       ],
+    );
+  }
+
+  /// DOUBLE KILL / TRIPLE KILL / RAMPAGE, centred and fading out.
+  Widget _streakBanner(Size s) {
+    final txt = game.banner;
+    if (txt == null) return const SizedBox.shrink();
+    final a = game.bannerAlpha;
+    return Positioned(
+      top: s.height * (Profile.instance.hudLandscape ? 0.16 : 0.24),
+      left: 0,
+      right: 0,
+      child: Opacity(
+        opacity: a,
+        child: Column(
+          children: [
+            Text(txt,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: kAccent,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 3,
+                    shadows: const [
+                      Shadow(color: Colors.black, blurRadius: 10),
+                      Shadow(color: Color(0xFFFF7A1A), blurRadius: 22),
+                    ])),
+            const SizedBox(height: 2),
+            Text('${game.streakKills} KILLS  ·  KEEP GOING',
+                style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 11,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
     );
   }
 
@@ -132,17 +213,22 @@ class HudLayer extends StatelessWidget {
       );
 
   // Places [child] centred on its stored [key] fraction of the screen, scaled
-  // and faded to that control's own settings.
-  Widget _place(Size s, String key, Widget child, double w, double h) {
+  // and faded to that control's own settings. Held sideways, Android's gesture
+  // bar sits down one edge and swallows touches, so controls are kept inside
+  // the safe area rather than the raw screen rect.
+  Widget _place(Size s, String key, Widget child, double w, double h,
+      [EdgeInsets safe = EdgeInsets.zero]) {
     final p = Profile.instance;
     final sc = p.hudScaleOf(key);
     final op = p.hudOpacityOf(key);
     final ww = w * sc, hh = h * sc;
     final f = p.hudPosOf(key);
+    final maxL = (s.width - safe.right - ww).clamp(0.0, s.width);
+    final maxT = (s.height - safe.bottom - hh).clamp(0.0, s.height);
     final left =
-        (f[0] * s.width - ww / 2).clamp(0.0, (s.width - ww).clamp(0.0, s.width));
+        (f[0] * s.width - ww / 2).clamp(safe.left.clamp(0.0, maxL), maxL);
     final top =
-        (f[1] * s.height - hh / 2).clamp(0.0, (s.height - hh).clamp(0.0, s.height));
+        (f[1] * s.height - hh / 2).clamp(safe.top.clamp(0.0, maxT), maxT);
     return Positioned(
       left: left,
       top: top,
@@ -201,15 +287,34 @@ class HudLayer extends StatelessWidget {
   Widget _hpBar() {
     final p = game.player;
     final hpFrac = (p.hp / kMaxHp).clamp(0.0, 1.0);
+    final vest = (p.vest / kVestDurability).clamp(0.0, 1.0);
+    final helm = (p.helmet / kHelmetDurability).clamp(0.0, 1.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('${p.hp.ceil().clamp(0, 100)} HP',
-            style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-                shadows: [Shadow(color: Colors.black, blurRadius: 3)])),
+        Row(
+          children: [
+            Text('${p.hp.ceil().clamp(0, 100)} HP',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    shadows: [Shadow(color: Colors.black, blurRadius: 3)])),
+            const Spacer(),
+            // gear pips: lit while that piece still has durability
+            if (vest > 0)
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.shield, size: 12, color: Color(0xFF7FC4FF)),
+              ),
+            if (helm > 0)
+              const Padding(
+                padding: EdgeInsets.only(left: 4),
+                child: Icon(Icons.sports_motorsports,
+                    size: 12, color: Color(0xFFC9D6A8)),
+              ),
+          ],
+        ),
         const SizedBox(height: 3),
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
@@ -223,13 +328,87 @@ class HudLayer extends StatelessWidget {
             ),
           ),
         ),
+        // A thin armour strip under the health bar, BGMI-style: you can see at
+        // a glance how much protection you have left.
+        if (vest > 0 || helm > 0) ...[
+          const SizedBox(height: 3),
+          Row(
+            children: [
+              if (vest > 0)
+                Expanded(
+                  flex: 3,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: vest,
+                      minHeight: 5,
+                      backgroundColor: Colors.black45,
+                      valueColor:
+                          const AlwaysStoppedAnimation(Color(0xFF7FC4FF)),
+                    ),
+                  ),
+                ),
+              if (vest > 0 && helm > 0) const SizedBox(width: 4),
+              if (helm > 0)
+                Expanded(
+                  flex: 2,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: helm,
+                      minHeight: 5,
+                      backgroundColor: Colors.black45,
+                      valueColor:
+                          const AlwaysStoppedAnimation(Color(0xFFC9D6A8)),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
       ],
+    );
+  }
+
+  /// SHIELD WALL button — instant cover, the panic button that makes close
+  /// fights survivable.
+  Widget _wallButton() {
+    final p = game.player;
+    final ready = p.walls > 0 && p.wallCd <= 0;
+    const col = Color(0xFF7FE8FF);
+    return GestureDetector(
+      onTap: ready ? game.deployWall : null,
+      child: Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withValues(alpha: 0.45),
+          border: Border.all(color: ready ? col : Colors.white24, width: 3),
+          boxShadow: ready
+              ? [BoxShadow(color: col.withValues(alpha: 0.45), blurRadius: 12)]
+              : null,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.view_week_rounded,
+                size: 20, color: ready ? col : Colors.white38),
+            Text('${p.walls}',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: ready ? col : Colors.white38)),
+          ],
+        ),
+      ),
     );
   }
 
   Widget _info(BuildContext context) {
     final p = game.player;
     final floating = game.isMobile || game.touchMode;
+    final landscape = Profile.instance.hudLandscape;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -257,27 +436,31 @@ class HudLayer extends StatelessWidget {
                 const SizedBox(width: 8),
                 _pill('${p.kills} KILLS', Colors.white24),
                 const Spacer(),
-                _MiniMap(game: game),
+                // Landscape screens are short — a full-size minimap would eat
+                // a third of the height, so it shrinks when held sideways.
+                _MiniMap(game: game, size: landscape ? 82 : 104),
               ],
             ),
-            const SizedBox(height: 8),
-            Center(child: _zoneBanner()),
-            const Spacer(),
+            // Pickup/status messages sit just under the zone banner. They used
+            // to float in the middle of the screen, right on top of your own
+            // operator — the worst possible place for a message.
+            const SizedBox(height: 44),
             if (game.toast != null)
               Center(
                 child: Container(
-                  margin: const EdgeInsets.only(bottom: 10),
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
                   decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.6),
+                    color: Colors.black.withValues(alpha: 0.62),
                     borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: Colors.white12),
                   ),
                   child: Text(game.toast!,
                       style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13)),
+                          fontWeight: FontWeight.w700, fontSize: 12)),
                 ),
               ),
+            const Spacer(),
             // On touch, HP + fire-mode + grenade + reload float freely
             // (customisable); on desktop they stay here in the info row.
             if (!floating)
@@ -362,6 +545,118 @@ class HudLayer extends StatelessWidget {
     );
   }
 
+  /// WEAPON SWITCH — the fix for "the game swapped my gun for me". Shows the
+  /// gun waiting in your other slot; tap to bring it up. Nothing else in the
+  /// game can change what you're holding.
+  Widget _swapButton() {
+    final p = game.player;
+    final other = p.otherWeapon;
+    final has = other != null;
+    final col = has ? kWeapons[other]!.color : Colors.white24;
+    return GestureDetector(
+      onTap: has ? game.swapWeapon : null,
+      child: Container(
+        width: 74,
+        height: 66,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: has ? col.withValues(alpha: 0.8) : Colors.white24),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.swap_horiz_rounded, size: 12, color: Colors.white54),
+                SizedBox(width: 3),
+                Text('SWITCH',
+                    style: TextStyle(
+                        fontSize: 8,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white54)),
+              ],
+            ),
+            const SizedBox(height: 2),
+            SizedBox(
+              width: 60,
+              height: 20,
+              child: has
+                  ? CustomPaint(painter: _GunIconPainter(other))
+                  : const Center(
+                      child: Text('EMPTY',
+                          style: TextStyle(
+                              fontSize: 9,
+                              color: Colors.white30,
+                              fontWeight: FontWeight.w800))),
+            ),
+            Text(has ? kWeapons[other]!.name.toUpperCase() : '—',
+                maxLines: 1,
+                overflow: TextOverflow.clip,
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: has ? col : Colors.white24)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Appears only while you're standing on a gun you'd have to trade for.
+  /// No tap = no swap, so loot can never cost you a fight.
+  Widget _pickupButton() {
+    final l = game.pickupPrompt;
+    if (l == null || l.weapon == null || !game.player.alive) {
+      return const SizedBox.shrink();
+    }
+    final w = kWeapons[l.weapon]!;
+    return GestureDetector(
+      onTap: game.takePickup,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.62),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: w.color, width: 2),
+          boxShadow: [
+            BoxShadow(color: w.color.withValues(alpha: 0.35), blurRadius: 14)
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+                width: 42,
+                height: 18,
+                child: CustomPaint(painter: _GunIconPainter(l.weapon!))),
+            const SizedBox(width: 8),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('PICK UP  ${w.name.toUpperCase()}',
+                    style: TextStyle(
+                        color: w.color,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5)),
+                Text('replaces ${game.player.weapon.name.toUpperCase()}',
+                    style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _grenadeButton() {
     final n = game.player.grenades;
     final has = n > 0;
@@ -390,7 +685,7 @@ class HudLayer extends StatelessWidget {
     );
   }
 
-  // Weapon panel — tap to reload. Shows gun name, ammo, and reload progress.
+  // Weapon panel — tap to reload. Shows the gun, its ammo and reload progress.
   Widget _reloadButton() {
     final p = game.player;
     final ammo = p.reloading ? 'RELOADING' : '${p.ammo} / ${p.weapon.mag}';
@@ -398,9 +693,9 @@ class HudLayer extends StatelessWidget {
     return GestureDetector(
       onTap: game.requestReload,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.4),
+          color: Colors.black.withValues(alpha: 0.45),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
               color: lowAmmo
@@ -411,6 +706,10 @@ class HudLayer extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
           children: [
+            SizedBox(
+                width: 92,
+                height: 22,
+                child: CustomPaint(painter: _GunIconPainter(p.weaponId))),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -450,7 +749,7 @@ class HudLayer extends StatelessWidget {
     );
   }
 
-  List<Widget> _sticks(Size s) {
+  List<Widget> _sticks(Size s, EdgeInsets safe) {
     final p = Profile.instance;
     // base size — _place() applies each control's own scale + opacity
     const size = 132.0;
@@ -481,8 +780,8 @@ class HudLayer extends StatelessWidget {
     final aimKey = p.leftHanded ? 'move' : 'aim';
     const h = size + 26; // joystick + label
     return [
-      _place(s, moveKey, move, size, h),
-      _place(s, aimKey, aim, size, h),
+      _place(s, moveKey, move, size, h, safe),
+      _place(s, aimKey, aim, size, h, safe),
     ];
   }
 
@@ -516,18 +815,35 @@ class HudLayer extends StatelessWidget {
   }
 }
 
+/// Paints a weapon exactly as it's drawn in the world, fitted to its box —
+/// used by the weapon panel, the slot switcher, the pickup prompt and the shop.
+class _GunIconPainter extends CustomPainter {
+  final WeaponId weapon;
+  const _GunIconPainter(this.weapon);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    drawGunIcon(canvas, Offset(size.width / 2, size.height / 2),
+        size.width * 0.96, weapon);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GunIconPainter old) => old.weapon != weapon;
+}
+
 // ============================================================
 //  Minimap
 // ============================================================
 class _MiniMap extends StatelessWidget {
   final RoyaleGame game;
-  const _MiniMap({required this.game});
+  final double size;
+  const _MiniMap({required this.game, this.size = 104});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 104,
-      height: 104,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(10),
@@ -557,6 +873,9 @@ class _ControlsEditorState extends State<ControlsEditor> {
     'aim': 'AIM · FIRE',
     'skill': 'SKILL',
     'nade': 'GRENADE',
+    'swap': 'SWITCH GUN',
+    'wall': 'SHIELD WALL',
+    'pick': 'PICK UP',
     'reload': 'RELOAD',
     'fire': 'FIRE MODE',
     'hp': 'HP BAR',
@@ -565,6 +884,7 @@ class _ControlsEditorState extends State<ControlsEditor> {
   late Map<String, double> _scale;
   late Map<String, double> _opacity;
   String _sel = 'move'; // control currently being tuned
+  bool? _loadedLandscape; // which orientation's layout is loaded
 
   @override
   void initState() {
@@ -583,9 +903,10 @@ class _ControlsEditorState extends State<ControlsEditor> {
   }
 
   void _reset() => setState(() {
+        final def = Profile.defaultHudFor(Profile.instance.hudLandscape);
         _pos = {
-          for (final e in Profile.kDefaultHud.entries)
-            e.key: List<double>.from(e.value),
+          for (final k in Profile.kDefaultHud.keys)
+            k: List<double>.from(def[k] ?? Profile.kDefaultHud[k]!),
         };
         _scale = {for (final k in Profile.kDefaultHud.keys) k: 1.0};
         _opacity = {for (final k in Profile.kDefaultHud.keys) k: 1.0};
@@ -593,7 +914,9 @@ class _ControlsEditorState extends State<ControlsEditor> {
 
   Future<void> _save() async {
     final p = Profile.instance;
-    p.resetHud();
+    // only the layout for the orientation being edited — the other one keeps
+    // whatever the player set up for it
+    p.resetHudPositions();
     _pos.forEach((k, v) => p.setHudPos(k, v[0], v[1]));
     _scale.forEach(p.setHudScale);
     _opacity.forEach(p.setHudOpacity);
@@ -608,6 +931,15 @@ class _ControlsEditorState extends State<ControlsEditor> {
       body: LayoutBuilder(
         builder: (context, box) {
           final s = Size(box.maxWidth, box.maxHeight);
+          // Editing the layout for however the phone is being held right now.
+          // If it gets rotated mid-edit, reload the other orientation's saved
+          // positions instead of dragging one layout into the other.
+          final land = s.width > s.height;
+          Profile.instance.hudLandscape = land;
+          if (_loadedLandscape != land) {
+            _loadedLandscape = land;
+            _load();
+          }
           return Stack(
             children: [
               // faint arena grid so placement feels in-context
@@ -621,7 +953,10 @@ class _ControlsEditorState extends State<ControlsEditor> {
               _token(s, 'skill', 64, 64, accent: const Color(0xFFB06BFF)),
               _token(s, 'nade', 60, 60,
                   accent: const Color(0xFF6ABF5A), emoji: '💣'),
-              _token(s, 'reload', 120, 66, accent: kAccent, box: true),
+              _token(s, 'swap', 74, 66, accent: kSafeEdge, box: true),
+              _token(s, 'wall', 60, 60, accent: const Color(0xFF7FE8FF)),
+              _token(s, 'pick', 168, 52, accent: kAccent2, box: true),
+              _token(s, 'reload', 130, 66, accent: kAccent, box: true),
               _token(s, 'fire', 64, 64, accent: kAccent, box: true),
               _token(s, 'hp', 150, 46, accent: const Color(0xFF52E06A), box: true),
               // header + tuning panel live at the TOP, where the screen is
@@ -645,13 +980,26 @@ class _ControlsEditorState extends State<ControlsEditor> {
                                   const Icon(Icons.close, color: Colors.white),
                             ),
                             const SizedBox(width: 2),
-                            const Expanded(
-                              child: Text('DRAG TO PLACE YOUR CONTROLS',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 1,
-                                      fontSize: 14)),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text('DRAG TO PLACE YOUR CONTROLS',
+                                      style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 1,
+                                          fontSize: 14)),
+                                  const Text(
+                                      'Drag any control · pinch-free sizing below',
+                                      style: TextStyle(
+                                          color: kAccent,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 10,
+                                          letterSpacing: 0.5)),
+                                ],
+                              ),
                             ),
                             TextButton.icon(
                               onPressed: _reset,
@@ -871,6 +1219,16 @@ class _MiniMapPainter extends CustomPainter {
       if (!c.alive || c == p) continue;
       if (p.pos.distanceTo(c.pos) > detect) continue;
       canvas.drawCircle(m(c.pos.x, c.pos.y), 2.4, red);
+    }
+    // live airdrop — a pulsing gold ring everyone can see and race to
+    final drop = game.airdrop;
+    if (drop != null && !drop.taken) {
+      final beat = 0.5 + 0.5 * math.sin(game.airdropT * 4);
+      final at = m(drop.pos.x, drop.pos.y);
+      canvas.drawCircle(at, 3 + 3 * beat,
+          Paint()..color = kAccent.withValues(alpha: 0.35 + 0.3 * beat));
+      canvas.drawRect(Rect.fromCenter(center: at, width: 5, height: 5),
+          Paint()..color = kAccent);
     }
     // player on top
     canvas.drawCircle(m(p.pos.x, p.pos.y), 3, Paint()..color = Colors.white);
@@ -1138,11 +1496,13 @@ class _StartOverlayState extends State<StartOverlay> {
           metaHeader(context, subtitle: 'OPERATIONS HUB'),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              padding: menuPad(context),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _operatorUnitCard(),
+                  const SizedBox(height: 10),
+                  _streakCard(),
                   const SizedBox(height: 14),
                   _schematicCard(),
                   const SizedBox(height: 18),
@@ -1156,6 +1516,8 @@ class _StartOverlayState extends State<StartOverlay> {
                       ],
                     ],
                   ),
+                  const SizedBox(height: 16),
+                  _difficultyPicker(),
                   const SizedBox(height: 16),
                   _mapPicker(),
                   const SizedBox(height: 18),
@@ -1265,8 +1627,11 @@ class _StartOverlayState extends State<StartOverlay> {
   Widget _schematicCard() {
     final p = Profile.instance;
     final unit = kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name.toUpperCase();
+    final sz = MediaQuery.of(context).size;
+    // A 240px card eats two thirds of a sideways screen — shrink it there.
+    final land = sz.width > sz.height;
     return Container(
-      height: 240,
+      height: land ? 168 : 240,
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(16),
@@ -1281,14 +1646,15 @@ class _StartOverlayState extends State<StartOverlay> {
                     child: CustomPaint(painter: _EditorGridPainter()))),
             Center(
               child: SizedBox(
-                width: 168,
-                height: 168,
+                width: land ? 120 : 168,
+                height: land ? 120 : 168,
                 child: CustomPaint(
                   painter: OperatorPreviewPainter(
                     outfit: p.outfitColor,
                     skin: p.skinColor,
                     accessory: p.accessory,
                     weapon: p.startWeapon,
+                    hero: p.hero,
                   ),
                 ),
               ),
@@ -1345,6 +1711,135 @@ class _StartOverlayState extends State<StartOverlay> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Daily login streak — a small, honest reason to open the app tomorrow.
+  Widget _streakCard() {
+    final p = Profile.instance;
+    final ready = p.streakReady;
+    return GestureDetector(
+      onTap: ready
+          ? () => setState(() {
+                final r = p.claimStreak();
+                if (r != null) {
+                  ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+                    duration: const Duration(seconds: 2),
+                    backgroundColor: const Color(0xFF14181F),
+                    content: Text('DAY ${p.streak} STREAK  ·  +${r.coins} COINS',
+                        style: const TextStyle(
+                            color: kAccent, fontWeight: FontWeight.w800)),
+                  ));
+                }
+              })
+          : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: ready
+              ? kAccent.withValues(alpha: 0.12)
+              : Colors.white.withValues(alpha: 0.035),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+              color: ready ? kAccent : Colors.white12, width: ready ? 1.5 : 1),
+        ),
+        child: Row(
+          children: [
+            Icon(ready ? Icons.card_giftcard : Icons.local_fire_department,
+                color: ready ? kAccent : Colors.white38, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('DAY ${p.streak} LOGIN STREAK',
+                      style: TextStyle(
+                          color: ready ? kAccent : Colors.white70,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 12,
+                          letterSpacing: 1)),
+                  Text(
+                      ready
+                          ? 'Tap to collect +${p.streakReward} coins'
+                          : 'Collected — come back tomorrow for more',
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 10.5)),
+                ],
+              ),
+            ),
+            // 7-day pip row
+            for (var i = 0; i < 7; i++)
+              Container(
+                width: 7,
+                height: 7,
+                margin: const EdgeInsets.only(left: 4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: i < p.streak.clamp(0, 7)
+                      ? kAccent
+                      : Colors.white.withValues(alpha: 0.15),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// CASUAL / NORMAL / HARDCORE. Bots scale their aim, damage, reaction and
+  /// eyesight to match — the match stays a real fight, just at your speed.
+  Widget _difficultyPicker() {
+    final p = Profile.instance;
+    return Column(
+      children: [
+        const Text('DIFFICULTY',
+            style: TextStyle(
+                fontSize: 11,
+                letterSpacing: 2,
+                color: Colors.white38,
+                fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            for (var i = 0; i < kDifficulties.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() {
+                    p.difficulty = i;
+                    p.save();
+                  }),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: p.difficulty == i
+                          ? kSafeEdge.withValues(alpha: 0.18)
+                          : Colors.white10,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                          color: p.difficulty == i ? kSafeEdge : Colors.white12),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(kDifficulties[i].name,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w900,
+                                color: p.difficulty == i
+                                    ? kSafeEdge
+                                    : Colors.white70)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text(p.diff.tagline,
+            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+      ],
     );
   }
 
@@ -1458,54 +1953,26 @@ class EndOverlay extends StatelessWidget {
   static final GlobalKey _shotKey = GlobalKey();
   const EndOverlay({super.key, required this.game});
 
-  // Capture the result card as a PNG and share it (BGMI/Free-Fire style),
-  // falling back to a copied text result if the capture fails.
-  Future<void> _shareShot(BuildContext context) async {
-    final png = await captureBoundary(_shotKey);
-    if (png == null) {
-      if (context.mounted) await _share(context); // text-only fallback
-      return;
-    }
-    try {
-      final dir = await getTemporaryDirectory();
-      final file =
-          await File('${dir.path}/zone_royale_result.png').writeAsBytes(png);
-      await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path, mimeType: 'image/png')],
+  // Capture the result card as a PNG and share it (BGMI/Free-Fire style).
+  // shareCard() handles every fallback and always reports back, so the button
+  // can no longer look like it did nothing.
+  Future<void> _shareShot(BuildContext context) => shareCard(
+        context,
+        cardKey: _shotKey,
         text: _resultText(),
-      ));
-    } catch (_) {
-      if (context.mounted) await _share(context);
-    }
-  }
-
-  /// Fallback when the screenshot capture fails: still open the system share
-  /// sheet, just with text. Clipboard is the last resort.
-  Future<void> _share(BuildContext context) async {
-    final txt = _resultText();
-    try {
-      await SharePlus.instance.share(ShareParams(text: txt));
-      return;
-    } catch (_) {
-      // no share target — fall through to the clipboard
-    }
-    await Clipboard.setData(ClipboardData(text: txt));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text('Result copied — paste it anywhere!'),
-          duration: Duration(seconds: 2)),
-    );
-  }
+        subject: 'Zone Royale result',
+        fileStem: 'zone_royale_result',
+      );
 
   /// Dynamic share caption built from the actual match result.
   String _resultText() {
     final won = game.resultWon;
     final kills = game.player.kills;
     final total = game.chars.length;
+    final streak = game.bestStreak > 1 ? ' (×${game.bestStreak} streak!)' : '';
     return won
-        ? '🏆 WINNER WINNER! #1 / $total in Zone Royale — $kills kills. Can you beat me?'
-        : '🔫 Zone Royale — #${game.resultPlacement} / $total, $kills kills. My turn to win next.';
+        ? '🏆 WINNER WINNER! #1 / $total in Zone Royale — $kills kills$streak. Can you beat me?'
+        : '🔫 Zone Royale — #${game.resultPlacement} / $total, $kills kills$streak. My turn to win next.';
   }
 
   Widget _rewardsCard(RoyaleGame game) {
@@ -1600,7 +2067,7 @@ class EndOverlay extends StatelessWidget {
           ),
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              padding: menuPad(context, top: 6),
               child: Column(
                 children: [
                   RepaintBoundary(
@@ -1664,6 +2131,7 @@ class EndOverlay extends StatelessWidget {
                                 skin: Profile.instance.skinColor,
                                 accessory: Profile.instance.accessory,
                                 weapon: Profile.instance.startWeapon,
+                                hero: Profile.instance.hero,
                               ),
                             ),
                           ),
@@ -1769,6 +2237,9 @@ class EndOverlay extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           stat('KILLS', '${game.player.kills}'),
+          // best multi-kill of the match — the number people brag about
+          stat('BEST STREAK',
+              game.bestStreak > 1 ? '×${game.bestStreak}' : '—'),
           stat('PLAYERS', '${game.chars.length}'),
           stat('RANK', Profile.instance.rank.toUpperCase()),
         ],
@@ -1859,7 +2330,7 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
         children: [
           metaHeader(context, subtitle: 'OPERATOR CONFIG'),
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 18, 6),
+              padding: headerPad(context),
               child: Row(
                 children: [
                   const Text('OPERATOR',
@@ -1890,7 +2361,7 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
             ),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                padding: menuPad(context, top: 4, bottom: 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1956,6 +2427,9 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
                     const SizedBox(height: 14),
                     _label('FIRE MODE'),
                     _fireMode(p),
+                    const SizedBox(height: 14),
+                    _label('SCREEN & FEEL'),
+                    _display(p),
                     const SizedBox(height: 14),
                     _label('CONTROLS'),
                     _controls(p),
@@ -2191,6 +2665,115 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
     return Row(children: [opt('AUTO', true), opt('SINGLE', false)]);
   }
 
+  /// Screen orientation, shake strength and the weapon-pickup rule — the three
+  /// things players asked to be able to control.
+  Widget _display(Profile p) {
+    Widget seg(List<String> labels, int sel, ValueChanged<int> onSel) => Row(
+          children: [
+            for (var i = 0; i < labels.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => onSel(i),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: sel == i ? kAccent : Colors.white10,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(labels[i],
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: sel == i
+                                ? const Color(0xFF10131A)
+                                : Colors.white70)),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('GRAPHICS',
+            style: TextStyle(
+                fontSize: 10,
+                letterSpacing: 1,
+                fontWeight: FontWeight.w800,
+                color: Colors.white38)),
+        const SizedBox(height: 8),
+        seg([for (final q in kQualities) q.name], p.quality, (i) {
+          setState(() => p.quality = i);
+          p.save();
+        }),
+        const SizedBox(height: 6),
+        Text(
+            '${p.gfx.tagline}. Drop this to SMOOTH if the game ever stutters — '
+            'it cuts scenery detail, particles and ground marks, not gameplay.',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 11,
+                height: 1.4)),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            const Text('Screen shake',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const Spacer(),
+            Text(
+                p.shake <= 0.01
+                    ? 'OFF'
+                    : '${(p.shake * 100).round()}%',
+                style: const TextStyle(
+                    color: kAccent, fontWeight: FontWeight.w800, fontSize: 12)),
+          ],
+        ),
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(trackHeight: 3),
+          child: Slider(
+            value: p.shake.clamp(0.0, 1.0),
+            activeColor: kAccent,
+            onChanged: (v) => setState(() => p.shake = v),
+          ),
+        ),
+        Text(
+            'Recoil kick without wrecking your aim. 50% is the default; 0 turns '
+            'it off completely.',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 11,
+                height: 1.4)),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('Auto-swap gun when you walk over one',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            Switch(
+              value: p.autoSwapWeapons,
+              activeThumbColor: kAccent,
+              onChanged: (v) => setState(() => p.autoSwapWeapons = v),
+            ),
+          ],
+        ),
+        Text(
+            p.autoSwapWeapons
+                ? 'ON — ground weapons replace what you are holding (old behaviour).'
+                : 'OFF — loot only fills an empty slot. A full swap needs a tap on '
+                    'PICK UP, so you never lose your gun mid-fight.',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 11,
+                height: 1.4)),
+      ],
+    );
+  }
+
   Widget _controls(Profile p) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2209,8 +2792,9 @@ class _ProfileOverlayState extends State<ProfileOverlay> {
         ),
         const SizedBox(height: 6),
         Text(
-          'Size and opacity are now set per control (move, aim, skill, grenade, '
-          'reload, fire mode, HP bar) in the editor below.',
+          'Position, size and opacity are set per control (move, aim, skill, '
+          'grenade, shield wall, switch, pick up, reload, fire mode, HP bar) in '
+          'the editor below.',
           style: TextStyle(
               color: Colors.white.withValues(alpha: 0.4),
               fontSize: 11,
@@ -2278,7 +2862,7 @@ class _ShopThumbPainter extends CustomPainter {
   final Color accent, outfit, skin;
   final int accessory, hero;
   final WeaponId weapon;
-  final bool evolved, gunOnly;
+  final bool evolved, gunOnly, headOnly;
   _ShopThumbPainter({
     required this.accent,
     required this.outfit,
@@ -2288,6 +2872,7 @@ class _ShopThumbPainter extends CustomPainter {
     required this.hero,
     required this.evolved,
     required this.gunOnly,
+    this.headOnly = false,
   });
 
   @override
@@ -2321,19 +2906,31 @@ class _ShopThumbPainter extends CustomPainter {
     canvas.save();
     canvas.clipRRect(rr);
     if (gunOnly) {
-      // weapon tiles: zoom in on the gun, angled so the silhouette reads
+      // weapon tiles: the gun itself, angled so the silhouette reads
       canvas.translate(c.dx, c.dy);
-      canvas.rotate(-0.45);
-      canvas.scale(1.35);
-      canvas.translate(-c.dx * 0.42, 0);
-      drawOperator(canvas, Offset.zero, size.width * 0.30, 0, 0, outfit, skin,
-          0, weapon,
-          fill: fill, stroke: stroke, hero: -1);
+      canvas.rotate(-0.42);
+      drawGunIcon(canvas, Offset.zero, size.width * 0.92, weapon,
+          fill: fill, stroke: stroke);
+    } else if (headOnly) {
+      // ACCESSORY tiles: a zoomed front-facing head wearing the item, so a
+      // Crown reads as a crown and a Mask reads as a mask.
+      drawHeroPortrait(canvas, rect.translate(0, size.height * 0.22).inflate(
+          size.width * 0.30),
+          outfit: outfit,
+          skin: skin,
+          accessory: accessory,
+          hero: hero < 0 ? 0 : hero,
+          showWeapon: false);
     } else {
-      // character tiles: face up so the head/accessory/hero gear is visible
-      drawOperator(canvas, c, size.width * 0.30, -math.pi / 2, -math.pi / 2,
-          outfit, skin, accessory, weapon,
-          fill: fill, stroke: stroke, hero: hero);
+      // character tiles: a front-facing bust. A top-down body in a 60px tile
+      // was unreadable — you could not tell one hero from another.
+      drawHeroPortrait(canvas, rect.deflate(size.width * 0.06),
+          outfit: outfit,
+          skin: skin,
+          accessory: accessory,
+          hero: hero < 0 ? 0 : hero,
+          weapon: weapon,
+          showWeapon: false);
     }
     canvas.restore();
 
@@ -2361,29 +2958,26 @@ class OperatorPreviewPainter extends CustomPainter {
   final Color skin;
   final int accessory;
   final WeaponId weapon;
+  final int hero;
   OperatorPreviewPainter({
     required this.outfit,
     required this.skin,
     required this.accessory,
     required this.weapon,
+    this.hero = 0,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final fill = Paint()..style = PaintingStyle.fill;
-    final stroke = Paint()..style = PaintingStyle.stroke;
-    final center = Offset(size.width * 0.42, size.height * 0.5);
-    final r = size.height * 0.26;
-    canvas.drawOval(
-        Rect.fromCenter(
-            center: center.translate(3, r * 0.7),
-            width: r * 2.1,
-            height: r * 0.8),
-        fill..color = const Color(0x33000000));
-    drawOperator(canvas, center, r, 0, 0, outfit, skin, accessory, weapon,
-        fill: fill,
-        stroke: stroke,
-        hero: Profile.instance.hero.clamp(0, kHeroes.length - 1));
+    // Front-facing bust — this is the player looking at THEIR operator, so it
+    // has to look like a person, not a gameplay sprite seen from a drone.
+    final box = Rect.fromLTWH(0, 0, size.width, size.height).deflate(4);
+    drawHeroPortrait(canvas, box,
+        outfit: outfit,
+        skin: skin,
+        accessory: accessory,
+        hero: hero,
+        weapon: weapon);
   }
 
   @override
@@ -2391,12 +2985,10 @@ class OperatorPreviewPainter extends CustomPainter {
       old.outfit != outfit ||
       old.skin != skin ||
       old.accessory != accessory ||
+      old.hero != hero ||
       old.weapon != weapon;
 }
 
-// ============================================================
-//  Daily missions screen
-// ============================================================
 class MissionsOverlay extends StatefulWidget {
   final RoyaleGame game;
   const MissionsOverlay({super.key, required this.game});
@@ -2445,7 +3037,7 @@ class _MissionsOverlayState extends State<MissionsOverlay> {
         children: [
           metaHeader(context, subtitle: 'DAILY OPERATIONS'),
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
+            padding: headerPad(context, top: 6, bottom: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -2470,7 +3062,7 @@ class _MissionsOverlayState extends State<MissionsOverlay> {
           ),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              padding: menuPad(context, top: 6),
               children: [
                 for (var i = 0; i < p.missions.length; i++)
                   _missionCard(i, p.missions[i]),
@@ -2654,7 +3246,7 @@ class _ShopOverlayState extends State<ShopOverlay> {
               weapon: p.startWeapon,
               hero: p.hero,
             ),
-            'Skin ${i + 1}',
+            i < kOutfitNames.length ? '${kOutfitNames[i]} Kit' : 'Kit ${i + 1}',
             'o$i',
           ),
     ];
@@ -2667,6 +3259,7 @@ class _ShopOverlayState extends State<ShopOverlay> {
               accessory: i,
               weapon: p.startWeapon,
               hero: p.hero,
+              headOnly: true,
             ),
             kAccessoryNames[i],
             'a$i',
@@ -2718,7 +3311,7 @@ class _ShopOverlayState extends State<ShopOverlay> {
         children: [
           metaHeader(context, subtitle: 'SUPPLY HUB'),
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 6, 18, 8),
+            padding: headerPad(context, top: 6, bottom: 8),
             child: Row(
               children: [
                 const Text('ARMORY',
@@ -2747,7 +3340,7 @@ class _ShopOverlayState extends State<ShopOverlay> {
           ),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+              padding: menuPad(context, top: 6),
               children: [
                 _section('HEROES', heroes),
                 _section('EVOLUTIONS', evos),
@@ -2780,11 +3373,12 @@ class _ShopOverlayState extends State<ShopOverlay> {
     int hero = -1,
     bool evolved = false,
     bool gunOnly = false,
+    bool headOnly = false,
   }) {
     final p = Profile.instance;
     return SizedBox(
-      width: 54,
-      height: 54,
+      width: 62,
+      height: 62,
       child: CustomPaint(
         painter: _ShopThumbPainter(
           accent: accent,
@@ -2795,6 +3389,7 @@ class _ShopOverlayState extends State<ShopOverlay> {
           hero: hero,
           evolved: evolved,
           gunOnly: gunOnly,
+          headOnly: headOnly,
         ),
       ),
     );

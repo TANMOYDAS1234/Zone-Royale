@@ -73,8 +73,8 @@ class Sfx {
     _haptic(HapticFeedback.mediumImpact);
   }
 
-  static void win() {
-    if (_ready) _win?.play(0.9);
+  static void win({double vol = 0.9}) {
+    if (_ready) _win?.play(vol);
     _haptic(HapticFeedback.heavyImpact);
   }
 

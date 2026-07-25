@@ -9,6 +9,18 @@ free on Render).
 
 ## Changelog (latest first)
 
+- **Playtest feedback pass — landscape, weapon slots, calmer shake, real online guns.**
+  - **LANDSCAPE by default.** The game now locks to landscape (Profile → *Screen & Feel* → LANDSCAPE / PORTRAIT / AUTO). The camera uses a shorter vertical window sideways (`kViewHeightLandscape`) so operators stay the same on-screen size while you see far more left/right. **Portrait and landscape keep separate control layouts** — the drag editor edits whichever way you're holding the phone.
+  - **Screen shake rebuilt.** Was: a fresh random ±N px offset every frame (impossible to aim through). Now: trauma-based, `offset = trauma² × 13px` following a smooth sine curve, decaying in ~0.5s, with all triggers retuned (firing is the lightest, blasts still kick and fall off with distance). Plus a **SCREEN SHAKE slider** (default 50%, 0 = off).
+  - **Two weapon slots — loot never takes the gun out of your hands.** Walking over a gun fills an *empty* slot (or quietly replaces a backup pistol). With both slots full you get a **PICK UP** prompt you have to tap; a **SWITCH** button (Q on desktop) changes which gun you're holding. Old behaviour is still available as Profile → *Auto-swap gun*.
+  - **All new gun art.** Every weapon is built from a shared parts kit (receiver, handguard, barrel, muzzle brake, magazine, optic, stock) with lit top edges and shaded bottoms. The same art is used for ground loot, the weapon panel, the slot switcher and the pickup prompt (`drawGunIcon`).
+  - **Online play fixed at the root.** The old server fired **one bullet per trigger *press***, so holding the stick shot once — that's what made quick match feel broken. The server now runs the **real weapon table** (fire rate, magazine, reload, spread, pellets, auto/semi), with ammo, reloads and sub-stepped hit detection so fast rounds can't tunnel through you.
+  - **Much lighter netcode.** Snapshots are packed int arrays (no repeated names — those ride a `roster` message), and **bullets aren't streamed at all**: the server broadcasts *shot events* and each client flies the tracer locally with the real stats. ~636 bytes/snapshot for a 6-player room. Clients render 90ms behind the newest snapshot and interpolate, so a late packet no longer shows up as a stutter.
+  - **Room settings actually apply.** The host can retune the room from the lobby (**CHANGE / APPLY SETTINGS**) and it takes effect; a forced WEAPON TYPE now really means everyone uses that gun (no weapon crates, no second slot); the player limit caps bot fill; map choice changes cover type (buildings / trees / walls / boulders).
+  - **Difficulty selector** — CASUAL / NORMAL / HARDCORE on the home screen, scaling bot aim, damage, reaction and eyesight on top of the existing ranked curve. NORMAL is meaningfully easier than before (bots deal 80% damage, hesitate longer, see less far).
+  - **New stuff:** killstreak callouts (DOUBLE KILL → GODLIKE) with a BEST STREAK stat on the result card, **airdrops** (a marked crate with a top-tier gun, minimap beacon, online + offline), and a **daily login streak** with coin rewards.
+  - **Graphics pass:** textured ground per map theme (grass tufts, asphalt patches, wind ripples, concrete slabs), permanent battle damage (blood pools, scorch craters, bullet scars, boot prints), one consistent light direction for every shadow, extruded cover with roof detail and lit windows, layered trees, cone muzzle flashes, glowing embers, explosion shockwaves and drifting gas at the zone wall.
+
 - **Custom Room = full BR online** — the room match now has feature parity with a solo match, all server-authoritative: **map cover** (buildings + sliding collision + bullets stop at walls), a **shrinking gas zone** (damages you outside, resets each round), **loot** (weapon crates that swap your gun + medkits that heal), **grenades** (throw button → flying nade with radial falloff blast), and **hero skills** (dash / shield / frenzy / medic / grenadier, 12s cd). Plus **rounds** (BO1/3/5), per-player weapons, and names above heads.
 - **CUSTOM ROOM lobby UI** (`CUSTOM_ROOM_COMMAND`) — host configures MAP & SECTOR, WEAPON TYPE, ROUNDS, PLAYER LIMIT, and equipment toggles; a lobby shows the live CONNECTED_PLAYERS roster before **START MISSION**. ARMORY/FACTION/INTEL bottom-nav tabs route to Shop/Profile/Missions.
 - **Launcher icon** — the crosshair app logo is rendered to a real PNG by `tool/gen_icon.dart` (pure-Dart pixel renderer + PNG encoder) and wired via `flutter_launcher_icons`.
@@ -86,8 +98,12 @@ flutter run -d <device-id>            # hot-reload dev build
 ```
 
 Controls — **Phone:** left stick move · right stick aim & fire · 💣 grenade ·
+⚡ skill · **SWITCH** to change gun · **PICK UP** when you're standing on one ·
 tap the weapon panel to reload. **Desktop:** WASD move · mouse aim · click fire ·
-R reload · G grenade · B fire mode · F skill.
+R reload · G grenade · B fire mode · F skill · **Q switch gun · E pick up**.
+
+> **Note:** the app and `server/` ship together. After changing `server/`, push so
+> Render rebuilds it — an out-of-date server shows a warning in the room lobby.
 
 ---
 
