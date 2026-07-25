@@ -1,3 +1,8 @@
+// The pre-2.0 room/lobby builders below are superseded by RoomConfigView /
+// RoomLobbyView in lib/ui/room_screens.dart. They are kept until the whole
+// multiplayer flow has been re-verified on device, then deleted.
+// ignore_for_file: unused_element
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui show Gradient;
@@ -11,7 +16,8 @@ import '../game/profile.dart';
 import '../game/royale_game.dart';
 import '../game/sfx.dart';
 import '../ui/capture.dart';
-import '../ui/game_ui.dart' show menuPad;
+import '../ui/room_screens.dart';
+import '../ui/theme.dart';
 import '../ui/hud_controls.dart';
 import 'net_client.dart';
 
@@ -309,51 +315,48 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
 
   // ============ SETUP: configure the room ============
   Widget _configView() {
-    return Stack(
-      children: [
-        const Positioned.fill(
-            child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
-        Column(
-          children: [
-            _header(),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: menuPad(context, top: 14, bottom: 18, side: 18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                        child: _titles(
-                            'Active Session Config', 'Custom Room Command')),
-                    const SizedBox(height: 22),
-                    _configCard(),
-                    const SizedBox(height: 16),
-                    _roomCodeField(),
-                    const SizedBox(height: 12),
-                    _advancedServer(),
-                    const SizedBox(height: 18),
-                    _bigButton(
-                        Icons.rocket_launch, 'CREATE / JOIN ROOM', _connect),
-                    const SizedBox(height: 10),
-                    _ghostButton(Icons.public, 'QUICK MATCH  ·  JOIN PUBLIC',
-                        _quickMatch),
-                    const SizedBox(height: 10),
-                    Center(
-                      child: Text('PROTOCOL: $_protocol   ·   HOST SETS THE RULES',
-                          style: TextStyle(
-                              fontFamily: _mono,
-                              color: Colors.white.withValues(alpha: 0.3),
-                              fontSize: 10,
-                              letterSpacing: 1)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            _bottomNav(),
-          ],
-        ),
-      ],
+    return RoomConfigView(
+      game: widget.game ?? RoyaleGame(),
+      mapSel: _mapSel,
+      sizeSel: _sizeSel,
+      weaponSel: _weaponSel,
+      bo: _bo,
+      botDiff: _botDiff,
+      medkit: _medkit,
+      grenades: _grenades,
+      skills: _skills,
+      bots: _bots,
+      roomCode: _room.text,
+      serverLabel: _server.text,
+      pingMs: _client?.pingMs ?? 0,
+      roomController: _room,
+      advanced: _advancedServer(),
+      onCycleMap: () =>
+          _apply(() => _mapSel = (_mapSel + 1) % (kMapThemes.length + 1)),
+      onCycleWeapon: () => _apply(() => _weaponSel =
+          _weaponSel >= kWeaponOrder.length - 1 ? -1 : _weaponSel + 1),
+      onBo: (v) => _apply(() => _bo = v),
+      onSize: (v) => _apply(() => _sizeSel = v),
+      onBotDiff: (v) => _apply(() => _botDiff = v),
+      onToggle: (k) => _apply(() {
+        switch (k) {
+          case 'medkit':
+            _medkit = !_medkit;
+            break;
+          case 'grenades':
+            _grenades = !_grenades;
+            break;
+          case 'skills':
+            _skills = !_skills;
+            break;
+          case 'bots':
+            _bots = !_bots;
+            break;
+        }
+      }),
+      onRandomCode: () => _apply(() => _room.text = _randomCode()),
+      onCreate: _connect,
+      onQuick: _quickMatch,
     );
   }
 
@@ -368,7 +371,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
 
   Widget _configCardLive(StateSetter s) {
     _innerSet = s;
-    return _configCard();
+    return _configView();
   }
 
   Widget _configCard() {
@@ -450,158 +453,47 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
 
   // ============ LOBBY: connected, waiting to deploy ============
   Widget _lobbyView(NetClient c) {
-    return Stack(
-      children: [
-        const Positioned.fill(
-            child: IgnorePointer(child: CustomPaint(painter: _GridPainter()))),
-        Column(
-          children: [
-            _header(),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: menuPad(context, top: 10, bottom: 12, side: 18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                        child: _titles(
-                            'Room ${c.roomCode.isEmpty ? _room.text : c.roomCode}',
-                            _wasQuick ? 'Quick Match' : 'Briefing Room')),
-                    if (c.serverOutdated) ...[
-                      const SizedBox(height: 14),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: kAccent2.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: kAccent2),
+    return RoomLobbyView(
+      game: widget.game ?? RoyaleGame(),
+      client: c,
+      roomLabel: c.roomCode.isEmpty ? _room.text : c.roomCode,
+      quick: _wasQuick,
+      onStart: _startMission,
+      onReconnect: _connect,
+      onLeave: _leave,
+      onChangeSettings: (c.isHost && !c.started)
+          ? () async {
+              await Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => Scaffold(
+                        backgroundColor: ZR.bg,
+                        body: StatefulBuilder(
+                          builder: (_, setInner) => Stack(
+                            children: [
+                              _configCardLive(setInner),
+                              Positioned(
+                                right: 18,
+                                bottom: 14,
+                                child: SizedBox(
+                                  width: 220,
+                                  child: ZrButton(
+                                    label: 'APPLY TO ROOM',
+                                    icon: Icons.check,
+                                    height: 46,
+                                    fontSize: 20,
+                                    onTap: () {
+                                      _client?.sendConfig(_buildConfig());
+                                      Navigator.of(context).maybePop();
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.sync_problem,
-                                color: kAccent2, size: 20),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                  'This server is running an older build. Redeploy '
-                                  'the server (push to GitHub → Render rebuilds) '
-                                  'to play online with this version.',
-                                  style: TextStyle(
-                                      fontFamily: _mono,
-                                      color: Colors.white
-                                          .withValues(alpha: 0.75),
-                                      fontSize: 11,
-                                      height: 1.4)),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 18),
-                    _summaryCard(c),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Text('Connected Players',
-                            style: TextStyle(
-                                fontFamily: _mono,
-                                color: Colors.white.withValues(alpha: 0.6),
-                                fontSize: 13,
-                                letterSpacing: 1,
-                                fontWeight: FontWeight.w700)),
-                        const Spacer(),
-                        Text(
-                            '${c.humanCount} / ${c.maxPlayers}'
-                            '${c.fillBots ? '  +${c.players.length - c.humanCount} BOTS' : ''}',
-                            style: TextStyle(
-                                fontFamily: _mono,
-                                color: kAccent,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800)),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    for (final p in c.players) _rosterTile(c, p),
-                    if (c.players.length <= 1)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                            _wasQuick
-                                ? 'Waiting for other players to drop in…'
-                                : 'Share room code “${c.roomCode.isEmpty ? _room.text : c.roomCode}” so friends can join.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.35),
-                                fontSize: 11)),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 6),
-              child: Column(
-                children: [
-                  _bigButton(Icons.rocket_launch, 'START MISSION', _startMission),
-                  const SizedBox(height: 10),
-                  // The host owns the rules, so they can retune the room right
-                  // here and have it take effect — no leave-and-rejoin dance.
-                  if (c.isHost && !c.started) ...[
-                    _ghostButton(Icons.tune, 'CHANGE / APPLY SETTINGS', () {
-                      Navigator.of(context)
-                          .push(MaterialPageRoute<void>(
-                              builder: (_) => Scaffold(
-                                    backgroundColor: const Color(0xFF05070C),
-                                    body: SafeArea(
-                                      child: Column(
-                                        children: [
-                                          _header(),
-                                          Expanded(
-                                            child: SingleChildScrollView(
-                                              padding:
-                                                  const EdgeInsets.all(18),
-                                              child: StatefulBuilder(
-                                                builder: (_, setInner) =>
-                                                    _configCardLive(setInner),
-                                              ),
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding:
-                                                const EdgeInsets.all(16),
-                                            child: _bigButton(Icons.check,
-                                                'APPLY TO ROOM', () {
-                                              _client
-                                                  ?.sendConfig(_buildConfig());
-                                              Navigator.of(context).maybePop();
-                                            }),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  )))
-                          .then((_) => setState(() {}));
-                    }),
-                    const SizedBox(height: 10),
-                  ],
-                  Row(
-                    children: [
-                      Expanded(
-                          child: _ghostButton(
-                              Icons.wifi_tethering, 'RECONNECT', _connect)),
-                      const SizedBox(width: 12),
-                      Expanded(
-                          child: _ghostButton(
-                              Icons.logout, 'LEAVE ROOM', _leave)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            _bottomNav(),
-          ],
-        ),
-      ],
+                      )));
+              if (mounted) setState(() {});
+            }
+          : null,
     );
   }
 
