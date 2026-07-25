@@ -2,6 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'logo.dart';
+import 'theme.dart';
+
 import '../game/config.dart';
 
 /// The Zone Royale crosshair mark, drawn entirely in code (no image asset).
@@ -107,6 +110,9 @@ class _LogoPainter extends CustomPainter {
 /// Animated boot splash: the crosshair scales/fades in over a tactical grid with
 /// corner brackets, the wordmark and tagline rise, and a loading bar fills.
 /// Calls [onDone] when the intro finishes.
+/// Boot sequence: the emblem draws itself inside a closing dashed orbit, the
+/// wordmark ignites, then a comm-link progress bar runs while telemetry ticks
+/// underneath. Matches the launch screen in the UI kit.
 class SplashScreen extends StatefulWidget {
   final VoidCallback onDone;
   const SplashScreen({super.key, required this.onDone});
@@ -119,11 +125,19 @@ class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c;
 
+  static const _steps = [
+    'INITIALISING TACTICAL CORE...',
+    'LOADING OPERATOR PROFILE...',
+    'ESTABLISHING SECURE COMM-LINK...',
+    'SYNCING ARMOURY MANIFEST...',
+    'DEPLOYMENT READY',
+  ];
+
   @override
   void initState() {
     super.initState();
     _c = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 2600))
+        vsync: this, duration: const Duration(milliseconds: 2800))
       ..forward();
     _c.addStatusListener((s) {
       if (s == AnimationStatus.completed) widget.onDone();
@@ -144,123 +158,230 @@ class _SplashScreenState extends State<SplashScreen>
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
-        final logoIn = Curves.easeOutBack.transform(_seg(0.05, 0.5));
-        final textIn = Curves.easeOut.transform(_seg(0.35, 0.7));
-        final load = Curves.easeInOut.transform(_seg(0.45, 0.98));
-        final fadeOut = _seg(0.9, 1.0);
+        final emblemIn = Curves.easeOutBack.transform(_seg(0.04, 0.42));
+        final orbit = Curves.easeInOut.transform(_seg(0.10, 0.62));
+        final textIn = Curves.easeOut.transform(_seg(0.30, 0.62));
+        final load = Curves.easeInOut.transform(_seg(0.34, 0.97));
+        final fadeOut = _seg(0.92, 1.0);
+        final step = _steps[(load * (_steps.length - 1)).round()];
+        final ms = (0.30 + (1 - load) * 2.4).toStringAsFixed(2);
+
         return Opacity(
           opacity: 1 - fadeOut,
-          child: Container(
-            color: const Color(0xFF05070C),
-            child: Stack(
+          child: TacticalBackdrop(
+            cell: 92,
+            child: LayoutBuilder(builder: (context, box) {
+              // everything is a fraction of the available height, so the boot
+              // screen fits a short landscape phone and a tall tablet alike
+              final h = box.maxHeight;
+              final w = box.maxWidth;
+              final emblem = (h * 0.36).clamp(84.0, 190.0);
+              final word = (h * 0.13).clamp(26.0, 58.0);
+              final barW = (w * 0.62).clamp(240.0, 560.0);
+              return Stack(
               fit: StackFit.expand,
               children: [
-                const IgnorePointer(child: CustomPaint(painter: _GridPainter())),
                 const _CornerBrackets(),
                 Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Transform.scale(
-                        scale: 0.6 + 0.4 * logoIn,
-                        child: Opacity(
-                          opacity: logoIn.clamp(0.0, 1.0),
-                          child: ZoneLogo(size: 128, tile: false),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // ---- emblem inside the closing orbit ----
+                        Transform.scale(
+                          scale: 0.72 + 0.28 * emblemIn,
+                          child: Opacity(
+                            opacity: emblemIn.clamp(0.0, 1.0),
+                            child: SizedBox(
+                              width: emblem,
+                              height: emblem,
+                              child: CustomPaint(
+                                painter: ZrEmblemPainter(
+                                    sweep: orbit, showOrbit: true),
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 26),
-                      Opacity(
-                        opacity: textIn,
-                        child: Transform.translate(
-                          offset: Offset(0, 16 * (1 - textIn)),
-                          child: Column(
+                        SizedBox(height: h * 0.035),
+                        // ---- wordmark ----
+                        Opacity(
+                          opacity: textIn,
+                          child: Transform(
+                            alignment: Alignment.center,
+                            transform: Matrix4.identity()
+                              ..scaleByDouble(0.94 + 0.06 * textIn,
+                                  0.94 + 0.06 * textIn, 1, 1),
+                            child: ZrLogo(height: word, showEmblem: false),
+                          ),
+                        ),
+                        SizedBox(height: h * 0.02),
+                        Opacity(
+                          opacity: textIn,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Text('ZONE ROYALE',
-                                  style: TextStyle(
-                                      color: kAccent,
-                                      fontSize: 40,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 2,
-                                      height: 1.0)),
-                              const SizedBox(height: 8),
-                              Text('10 DROP IN.  1 WALKS OUT.',
-                                  style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.6),
-                                      fontSize: 12,
-                                      letterSpacing: 3,
-                                      fontWeight: FontWeight.w600)),
+                              Container(
+                                  width: 46,
+                                  height: 1,
+                                  color: Colors.white.withValues(alpha: 0.25)),
+                              const SizedBox(width: 14),
+                              Text('10 DROP IN. 1 WALKS OUT.',
+                                  style: ZR.mono(12,
+                                      color: Colors.white70, spacing: 3)),
+                              const SizedBox(width: 14),
+                              Container(
+                                  width: 46,
+                                  height: 1,
+                                  color: Colors.white.withValues(alpha: 0.25)),
                             ],
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                // loading bar
-                Positioned(
-                  left: 40,
-                  right: 40,
-                  bottom: 90,
-                  child: Opacity(
-                    opacity: textIn,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text('SYSTEM CHECK: OPTIMAL',
-                                style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.45),
-                                    fontSize: 10,
-                                    letterSpacing: 1)),
-                            Text('LOADING… ${(load * 100).round()}%',
-                                style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.45),
-                                    fontSize: 10,
-                                    letterSpacing: 1)),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: LinearProgressIndicator(
-                            value: load,
-                            minHeight: 6,
-                            backgroundColor: Colors.white.withValues(alpha: 0.08),
-                            valueColor: const AlwaysStoppedAnimation(kAccent),
+                        SizedBox(height: h * 0.055),
+                        // ---- comm-link progress ----
+                        Opacity(
+                          opacity: _seg(0.32, 0.5),
+                          child: SizedBox(
+                            width: barW,
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                        width: 7,
+                                        height: 7,
+                                        color: ZR.primary),
+                                    const SizedBox(width: 10),
+                                    Text(step,
+                                        style: ZR.mono(12,
+                                            color: Colors.white70,
+                                            spacing: 1.5)),
+                                    const Spacer(),
+                                    Text('${ms}ms',
+                                        style: ZR.mono(12,
+                                            color: Colors.white38)),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Stack(
+                                  children: [
+                                    Container(
+                                        height: 3,
+                                        decoration: BoxDecoration(
+                                            color: Colors.white
+                                                .withValues(alpha: 0.10),
+                                            borderRadius:
+                                                BorderRadius.circular(2))),
+                                    FractionallySizedBox(
+                                      widthFactor: load,
+                                      child: Container(
+                                        height: 3,
+                                        decoration: BoxDecoration(
+                                          color: ZR.primary,
+                                          borderRadius:
+                                              BorderRadius.circular(2),
+                                          boxShadow: [
+                                            BoxShadow(
+                                                color: ZR.primary.withValues(
+                                                    alpha: 0.7),
+                                                blurRadius: 10),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 14),
+                                // telemetry row
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('LAT: 34.0522° N',
+                                        style: ZR.mono(10,
+                                            color: Colors.white24)),
+                                    Text('LNG: 118.2437° W',
+                                        style: ZR.mono(10,
+                                            color: Colors.white24)),
+                                    Text('ENC_MODE: RSA_4096',
+                                        style: ZR.mono(10,
+                                            color: Colors.white24)),
+                                    Text('VER: 2.1.0_PROD',
+                                        style: ZR.mono(10,
+                                            color: Colors.white24)),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
+                // ---- server status chip ----
+                Positioned(
+                  left: 20,
+                  bottom: 18,
+                  child: Opacity(
+                    opacity: _seg(0.5, 0.75),
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(10, 8, 18, 8),
+                      decoration: BoxDecoration(
+                        color: ZR.surface.withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border(
+                            left: BorderSide(color: ZR.primary, width: 3),
+                            top: BorderSide(color: ZR.line),
+                            right: BorderSide(color: ZR.line),
+                            bottom: BorderSide(color: ZR.line)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(7),
+                            decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.06),
+                                borderRadius: BorderRadius.circular(8)),
+                            child: const Icon(Icons.shield_outlined,
+                                size: 16, color: Colors.white70),
+                          ),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('SERVER STATUS',
+                                  style:
+                                      ZR.mono(9, color: Colors.white38)),
+                              Text('OPTIMAL_OPERATIONAL',
+                                  style: ZR.mono(12,
+                                      color: ZR.success,
+                                      weight: FontWeight.w700)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  right: 20,
+                  bottom: 22,
+                  child: Opacity(
+                    opacity: _seg(0.5, 0.75),
+                    child: Text('© ZONE ROYALE',
+                        style: ZR.mono(11, color: Colors.white24, spacing: 2)),
+                  ),
+                ),
               ],
-            ),
+            );
+            }),
           ),
         );
       },
     );
   }
-}
-
-class _GridPainter extends CustomPainter {
-  const _GridPainter();
-  @override
-  void paint(Canvas canvas, Size size) {
-    final p = Paint()
-      ..color = Colors.white.withValues(alpha: 0.035)
-      ..strokeWidth = 1;
-    for (double x = 0; x < size.width; x += 42) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), p);
-    }
-    for (double y = 0; y < size.height; y += 42) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
 class _CornerBrackets extends StatelessWidget {

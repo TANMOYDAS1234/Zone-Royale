@@ -392,8 +392,11 @@ class HudLayer extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.view_week_rounded,
-                size: 20, color: ready ? col : Colors.white38),
+            SizedBox(
+              width: 24,
+              height: 16,
+              child: CustomPaint(painter: ShieldWallGlyph(lit: ready)),
+            ),
             Text('${p.walls}',
                 style: TextStyle(
                     fontSize: 11,

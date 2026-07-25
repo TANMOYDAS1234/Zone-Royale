@@ -1188,6 +1188,7 @@ class _ArenaViewState extends State<_ArenaView>
   Duration _fpsWindow = Duration.zero;
 
   static const double _speed = 250; // must match the server's playerSpeed
+  static final math.Random _rng = math.Random();
 
   @override
   void initState() {
@@ -1314,22 +1315,26 @@ class _ArenaViewState extends State<_ArenaView>
     for (final s in c.shotQueue) {
       final id = WeaponId.values[s.wi.clamp(0, WeaponId.values.length - 1)];
       final w = kWeapons[id]!;
+      // The muzzle, not the chest: the gun barrel sits ~2.15 body radii
+      // forward, exactly where the offline game spawns its rounds. Firing from
+      // the hit radius made online bullets appear out of the operator's body.
+      const muzzle = kPlayerRadius * 2.15;
       for (var i = 0; i < w.pellets; i++) {
-        final jitter =
-            (math.Random().nextDouble() * 2 - 1) * w.spread;
+        final jitter = (_rng.nextDouble() * 2 - 1) * w.spread;
         final a = s.aim + jitter;
         _tracers.add(_Tracer(
-          Offset(s.x + math.cos(a) * 22, s.y + math.sin(a) * 22),
+          Offset(s.x + math.cos(a) * muzzle, s.y + math.sin(a) * muzzle),
           Offset(math.cos(a) * w.bulletSpeed, math.sin(a) * w.bulletSpeed),
           w.range,
           w.color,
           _tracerWidth(id),
         ));
       }
-      // muzzle flash + smoke + brass
-      final tip = Offset(s.x + math.cos(s.aim) * 26, s.y + math.sin(s.aim) * 26);
+      // muzzle flash + smoke + brass, at the barrel
+      final tip =
+          Offset(s.x + math.cos(s.aim) * muzzle, s.y + math.sin(s.aim) * muzzle);
       for (var i = 0; i < 3; i++) {
-        final a = s.aim + (math.Random().nextDouble() - 0.5) * 0.6;
+        final a = s.aim + (_rng.nextDouble() - 0.5) * 0.6;
         _fx.add(_Fx(tip, Offset(math.cos(a) * 130, math.sin(a) * 130), 0.09, 4,
             const Color(0xFFFFE9A8)));
       }
@@ -1340,14 +1345,14 @@ class _ArenaViewState extends State<_ArenaView>
 
     for (final b in c.boomQueue) {
       for (var i = 0; i < 22; i++) {
-        final a = math.Random().nextDouble() * math.pi * 2;
-        final sp = 90 + math.Random().nextDouble() * 300;
+        final a = _rng.nextDouble() * math.pi * 2;
+        final sp = 90 + _rng.nextDouble() * 300;
         _fx.add(_Fx(b, Offset(math.cos(a) * sp, math.sin(a) * sp),
-            0.28 + math.Random().nextDouble() * 0.35, 6,
+            0.28 + _rng.nextDouble() * 0.35, 6,
             i.isEven ? const Color(0xFFFFB020) : const Color(0xFFFF5A2A)));
       }
       for (var i = 0; i < 8; i++) {
-        final a = math.Random().nextDouble() * math.pi * 2;
+        final a = _rng.nextDouble() * math.pi * 2;
         _fx.add(_Fx(b, Offset(math.cos(a) * 50, math.sin(a) * 50), 0.9, 12,
             const Color(0x77555560)));
       }
@@ -1383,7 +1388,7 @@ class _ArenaViewState extends State<_ArenaView>
       if (_blocksBullet(t.pos.dx, t.pos.dy)) {
         t.travelled = t.range + 1;
         for (var i = 0; i < 4; i++) {
-          final a = math.Random().nextDouble() * math.pi * 2;
+          final a = _rng.nextDouble() * math.pi * 2;
           _fx.add(_Fx(t.pos, Offset(math.cos(a) * 70, math.sin(a) * 70), 0.22,
               2.4, t.color));
         }
@@ -1644,6 +1649,43 @@ class _ArenaViewState extends State<_ArenaView>
                     color: ready ? color : Colors.white38,
                     fontSize: 10,
                     fontWeight: FontWeight.w800)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// SHIELD WALL button. Uses the same slab glyph the wall is drawn with in
+  /// the world, so the control and the thing it deploys read as one object.
+  Widget _wallButton(int charges, VoidCallback onTap) {
+    final ready = charges > 0;
+    const col = Color(0xFF7FE8FF);
+    return GestureDetector(
+      onTap: ready ? onTap : null,
+      child: Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withValues(alpha: 0.45),
+          border: Border.all(color: ready ? col : Colors.white24, width: 3),
+          boxShadow: ready
+              ? [BoxShadow(color: col.withValues(alpha: 0.45), blurRadius: 12)]
+              : null,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 24,
+              height: 16,
+              child: CustomPaint(painter: ShieldWallGlyph(lit: ready)),
+            ),
+            Text('$charges',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    color: ready ? col : Colors.white38)),
           ],
         ),
       ),
@@ -2036,8 +2078,7 @@ class _ArenaViewState extends State<_ArenaView>
         _place(
             size,
             'wall',
-            _actionButton('🧱', '${me?.walls ?? 0}', const Color(0xFF7FE8FF),
-                (me?.walls ?? 0) > 0, () => _wallQ = true),
+            _wallButton(me?.walls ?? 0, () => _wallQ = true),
             60,
             60,
             safe),

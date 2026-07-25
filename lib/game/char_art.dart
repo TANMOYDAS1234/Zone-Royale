@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/rendering.dart' show CustomPainter;
+
 import 'config.dart';
 
 const Color _hair = Color(0xFF2A2018);
@@ -1038,6 +1040,46 @@ void drawGunIcon(Canvas canvas, Offset centre, double width, WeaponId w,
   canvas.translate(centre.dx - width / 2, centre.dy + r * 0.05);
   _drawWeapon(canvas, w, r, const Color(0xFFF4CBA2), f, s, hands: false);
   canvas.restore();
+}
+
+/// The shield-wall glyph, drawn the same way the deployed wall is drawn in the
+/// world: a frosted slab with vertical ribs and a lit core seam. Used on the
+/// HUD button so the control and the object it places look like one thing.
+class ShieldWallGlyph extends CustomPainter {
+  final bool lit;
+  const ShieldWallGlyph({this.lit = true});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final col = lit ? const Color(0xFF7FE8FF) : const Color(0x66FFFFFF);
+    final r = RRect.fromRectAndRadius(
+        Offset.zero & size, Radius.circular(size.height * 0.22));
+    canvas.drawRRect(
+        r, Paint()..color = col.withValues(alpha: lit ? 0.28 : 0.12));
+    canvas.drawRRect(
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.6
+          ..color = col.withValues(alpha: lit ? 0.95 : 0.4));
+    final rib = Paint()
+      ..strokeWidth = 1.2
+      ..color = col.withValues(alpha: lit ? 0.55 : 0.25);
+    for (var i = 1; i < 4; i++) {
+      final x = size.width * i / 4;
+      canvas.drawLine(Offset(x, 2.5), Offset(x, size.height - 2.5), rib);
+    }
+    // lit core seam
+    canvas.drawRect(
+        Rect.fromCenter(
+            center: Offset(size.width / 2, size.height / 2),
+            width: size.width - 4,
+            height: 1.8),
+        Paint()..color = col.withValues(alpha: lit ? 0.9 : 0.3));
+  }
+
+  @override
+  bool shouldRepaint(covariant ShieldWallGlyph old) => old.lit != lit;
 }
 
 /// Draws just the head gear at [head] with head-radius [hr] — used by the shop

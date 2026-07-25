@@ -53,6 +53,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.7
 
 
 # ------------------------------------------------------------------
@@ -89,6 +90,19 @@ flutter:
 
   assets:
     - assets/sfx/
+
+  # Design system type (see GAME_WORKFLOW.md §7). Bundled rather than fetched
+  # at runtime so the game looks right offline and on first launch.
+  fonts:
+    - family: Display          # headlines — tall condensed caps
+      fonts:
+        - asset: assets/fonts/BebasNeue-Regular.ttf
+    - family: Body             # UI copy
+      fonts:
+        - asset: assets/fonts/HankenGrotesk.ttf
+    - family: Mono             # tactical labels, readouts, codes
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:
