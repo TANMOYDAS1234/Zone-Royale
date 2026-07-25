@@ -184,81 +184,150 @@ void drawOperator(
         ..color = const Color(0x70000000)
         ..strokeWidth = 2);
 
-  // ---- body armour (worn over the vest, under the hero gear) ----
+  // ---- body armour: a real plate carrier, worn over the fatigues ----
   if (vest) {
-    // hard plate carrier: front plate, cummerbund, mag pouches, shoulder rig
+    const plate = Color(0xFF2C3646);
+    const plateLo = Color(0xFF1E2733);
+    const plateHi = Color(0xFF56657C);
+    const webbing = Color(0xFF3E4B5E);
+    const trim = Color(0xFF8FB6E0);
+
+    // cummerbund wrapping the sides (drawn first, sits under the front plate)
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(-r * 0.06, 0), width: r * 0.9, height: r * 1.62),
+            Radius.circular(r * 0.22)),
+        fill..color = plateLo);
+    // shoulder plates — the silhouette cue that says "this one is armoured"
+    for (final sgn in const [-1.0, 1.0]) {
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                  center: Offset(r * 0.02, sgn * r * 0.78),
+                  width: r * 0.74,
+                  height: r * 0.52),
+              Radius.circular(r * 0.2)),
+          fill..color = webbing);
+      // lit top edge of each pauldron
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                  center: Offset(r * 0.14, sgn * r * 0.8),
+                  width: r * 0.36,
+                  height: r * 0.2),
+              Radius.circular(r * 0.08)),
+          fill..color = trim.withValues(alpha: 0.35));
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                  center: Offset(r * 0.02, sgn * r * 0.78),
+                  width: r * 0.74,
+                  height: r * 0.52),
+              Radius.circular(r * 0.2)),
+          stroke
+            ..color = const Color(0x66000000)
+            ..strokeWidth = r * 0.04);
+    }
+
+    // front plate
     canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromCenter(
                 center: Offset(r * 0.08, 0), width: r * 1.06, height: r * 1.5),
             Radius.circular(r * 0.2)),
-        fill..color = const Color(0xFF2C3646));
+        fill..color = plate);
+    // ballistic panel seam + carbon weave
+    canvas.drawRect(
+        Rect.fromCenter(
+            center: Offset(r * 0.08, 0), width: r * 0.98, height: r * 0.09),
+        fill..color = const Color(0x55000000));
+    stroke
+      ..color = const Color(0x2E000000)
+      ..strokeWidth = r * 0.03;
+    for (var i = -2; i <= 2; i++) {
+      canvas.drawLine(Offset(-r * 0.34, i * r * 0.26),
+          Offset(r * 0.52, i * r * 0.26), stroke);
+    }
+    // sculpted highlight: light comes from the front-left
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(r * 0.36, -r * 0.2),
+                width: r * 0.34,
+                height: r * 0.78),
+            Radius.circular(r * 0.14)),
+        fill..color = plateHi.withValues(alpha: 0.5));
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(-r * 0.24, r * 0.28),
+                width: r * 0.3,
+                height: r * 0.8),
+            Radius.circular(r * 0.14)),
+        fill..color = const Color(0x33000000));
+
+    // MOLLE webbing rows + mag pouches with flaps
+    for (final py in const [-0.44, 0.0, 0.44]) {
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                  center: Offset(r * 0.42, r * py),
+                  width: r * 0.26,
+                  height: r * 0.32),
+              Radius.circular(r * 0.05)),
+          fill..color = webbing);
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(
+              Rect.fromCenter(
+                  center: Offset(r * 0.42, r * (py - 0.1)),
+                  width: r * 0.26,
+                  height: r * 0.12),
+              Radius.circular(r * 0.04)),
+          fill..color = plateHi.withValues(alpha: 0.45)); // flap
+      canvas.drawCircle(Offset(r * 0.42, r * (py + 0.06)), r * 0.03,
+          fill..color = const Color(0xFF12161D)); // press stud
+    }
+
+    // throat / neck guard
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(r * 0.58, 0), width: r * 0.26, height: r * 0.74),
+            Radius.circular(r * 0.12)),
+        fill..color = plateLo);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(r * 0.6, 0), width: r * 0.1, height: r * 0.6),
+            Radius.circular(r * 0.05)),
+        fill..color = plateHi.withValues(alpha: 0.4));
+
+    // rivets at the plate corners — small, but they read as hardware
+    for (final sgn in const [-1.0, 1.0]) {
+      for (final x in const [-0.3, 0.42]) {
+        canvas.drawCircle(Offset(r * x, sgn * r * 0.62), r * 0.045,
+            fill..color = const Color(0xFF9FB4CC));
+      }
+    }
+    // blood-type tag
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(-r * 0.16, -r * 0.56),
+                width: r * 0.2,
+                height: r * 0.12),
+            Radius.circular(r * 0.03)),
+        fill..color = const Color(0xFFB63A3A));
+    // crisp outline so the armour separates from the body
     canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromCenter(
                 center: Offset(r * 0.08, 0), width: r * 1.06, height: r * 1.5),
             Radius.circular(r * 0.2)),
         stroke
-          ..color = const Color(0xFF8FB6E0)
-          ..strokeWidth = r * 0.07);
-    // plate seam + pouches
-    canvas.drawRect(
-        Rect.fromCenter(
-            center: Offset(r * 0.08, 0), width: r * 0.98, height: r * 0.1),
-        fill..color = const Color(0x55000000));
-    for (final py in const [-0.42, 0.0, 0.42]) {
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(r * 0.42, r * py),
-                  width: r * 0.24,
-                  height: r * 0.3),
-              Radius.circular(r * 0.05)),
-          fill..color = const Color(0xFF3E4B5E));
-    }
-    // top highlight so the plate reads as hard, not cloth
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromCenter(
-                center: Offset(r * 0.34, -r * 0.16),
-                width: r * 0.36,
-                height: r * 0.7),
-            Radius.circular(r * 0.12)),
-        fill..color = const Color(0x33FFFFFF));
-    // shoulder plates — the silhouette cue that says "this one is armoured"
-    for (final s in const [-1.0, 1.0]) {
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(r * 0.02, s * r * 0.76),
-                  width: r * 0.7,
-                  height: r * 0.5),
-              Radius.circular(r * 0.18)),
-          fill..color = const Color(0xFF394557));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(r * 0.12, s * r * 0.78),
-                  width: r * 0.34,
-                  height: r * 0.2),
-              Radius.circular(r * 0.08)),
-          fill..color = const Color(0x55BFD8F0));
-    }
-    // neck guard + collar ring
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromCenter(
-                center: Offset(r * 0.5, 0), width: r * 0.3, height: r * 0.8),
-            Radius.circular(r * 0.12)),
-        fill..color = const Color(0xFF232B37));
-    // carbon weave across the plate
-    stroke
-      ..color = const Color(0x33000000)
-      ..strokeWidth = r * 0.035;
-    for (var i = -2; i <= 2; i++) {
-      canvas.drawLine(Offset(r * -0.3, i * r * 0.28),
-          Offset(r * 0.5, i * r * 0.28), stroke);
-    }
+          ..color = trim.withValues(alpha: 0.75)
+          ..strokeWidth = r * 0.06);
   }
   if (armourFlash > 0) {
     canvas.drawCircle(Offset(r * 0.4, 0), r * 0.9,
@@ -376,6 +445,41 @@ void drawOperator(
         fill..color = const Color(0xFF2A3320));
     canvas.drawCircle(Offset(head.dx + hr * 0.74, -hr * 0.03), hr * 0.07,
         fill..color = const Color(0xCC9FE0FF));
+    // goggles pushed up on the crown — the detail every real operator has
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(head.dx - hr * 0.34, 0),
+                width: hr * 0.3,
+                height: hr * 1.35),
+            Radius.circular(hr * 0.14)),
+        fill..color = const Color(0xFF171B12));
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(head.dx - hr * 0.34, 0),
+                width: hr * 0.14,
+                height: hr * 1.15),
+            Radius.circular(hr * 0.07)),
+        fill..color = const Color(0x99A8D8FF));
+    // IR strobe tab
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            Rect.fromCenter(
+                center: Offset(head.dx - hr * 0.72, hr * 0.34),
+                width: hr * 0.22,
+                height: hr * 0.18),
+            Radius.circular(hr * 0.05)),
+        fill..color = const Color(0xFF2B3320));
+    canvas.drawCircle(head.translate(-hr * 0.72, hr * 0.34), hr * 0.06,
+        fill..color = const Color(0xCC7FE08A));
+    // cover seam over the crown
+    stroke
+      ..color = const Color(0x55000000)
+      ..strokeWidth = hr * 0.07;
+    canvas.drawArc(
+        Rect.fromCircle(center: head.translate(-hr * 0.04, 0), radius: hr * 0.72),
+        2.0, 2.3, false, stroke);
     // chin strap running under the jaw
     stroke
       ..color = const Color(0xFF15180F)
@@ -1273,96 +1377,42 @@ void _drawAccessory(Canvas canvas, Offset head, double hr, int acc, Color outfit
   }
 }
 
-// =====================================================================
-//  HERO PORTRAITS (front view)
-//
-//  The in-match art is top-down because that's the camera — but a bird's-eye
-//  body will never read as a *character*. Menus, the shop and the result card
-//  therefore use this: a proper front-facing bust with a face, hair, gear and
-//  the hero's weapon held across the chest. It's the difference between "a
-//  coloured blob" and "my operator".
-// =====================================================================
 
-class _HeroLook {
-  final String name;
-  final Color hair;
-  final Color accent;
-  final bool beard;
-  final bool longHair; // ponytail
-  final bool bandana;
-  final bool visor;
-  final bool headset;
-  final Color eyes;
-  const _HeroLook(this.name, this.hair, this.accent,
-      {this.beard = false,
-      this.longHair = false,
-      this.bandana = false,
-      this.visor = false,
-      this.headset = false,
-      this.eyes = const Color(0xFF2B3A4A)});
-}
-
-const List<_HeroLook> _looks = [
-  _HeroLook('STRIKER', Color(0xFF2A2018), Color(0xFF4F6BFF),
-      visor: true, eyes: Color(0xFF35507A)),
-  _HeroLook('BASTION', Color(0xFF141821), Color(0xFF37D0FF),
-      beard: true, eyes: Color(0xFF2E4A55)),
-  _HeroLook('VORTEX', Color(0xFF5E1A1A), Color(0xFFFF5A5F),
-      bandana: true, eyes: Color(0xFF6B2C2C)),
-  _HeroLook('MERCY', Color(0xFFB9853F), Color(0xFF52E06A),
-      longHair: true, headset: true, eyes: Color(0xFF3E6B4A)),
-  _HeroLook('BOOMER', Color(0xFF57534E), Color(0xFFFFB02E),
-      beard: true, eyes: Color(0xFF5A4A32)),
-];
-
-/// Draws a front-facing operator bust filling [box] — a premium character
-/// card, not a game sprite.
+/// Draws the operator EXACTLY as they appear in a match (top-down), framed for
+/// a menu tile: a soft accent spotlight, a grounded shadow, and the operator
+/// facing "up" so the whole body plan and the gun read clearly.
 ///
-/// What makes it read as "premium" rather than clip-art:
-///  * portrait proportions (head ≈ a third of the bust, wide shoulders),
-///  * a coloured spotlight behind the operator in their hero accent,
-///  * one hard key light from the upper left plus a cool rim light on the
-///    right edge, which is the trick that gives flat vector art depth,
-///  * a sculpted face — brow ridge, cheekbone, jaw and chin shadows — instead
-///    of a circle with two dots.
-void drawHeroPortrait(
+/// Menus deliberately use the in-game art — what you see in the shop is what
+/// you get on the battlefield, not a stylised portrait that promises something
+/// the game never shows you.
+void drawOperatorTile(
   Canvas canvas,
   Rect box, {
   required Color outfit,
   required Color skin,
   int accessory = 0,
-  int hero = 0,
-  WeaponId? weapon,
-  bool showWeapon = true,
+  int hero = -1,
+  WeaponId weapon = WeaponId.smg,
+  Color? glow,
+  double zoom = 1.0, // >1 crops in (used by accessory tiles to show the head)
+  double headBias = 0.0, // shifts the framing toward the head
+  bool vest = false,
+  bool helmet = false,
 }) {
-  final look = _looks[hero.clamp(0, _looks.length - 1)];
   final fill = Paint()..style = PaintingStyle.fill;
   final stroke = Paint()..style = PaintingStyle.stroke;
+  final accent = glow ?? const Color(0xFF9AA6B2);
+  final c = box.center;
+  final r = math.min(box.width, box.height) * 0.30 * zoom;
 
-  // Work in a 100x100 space, then map it onto the box.
-  final s = math.min(box.width, box.height) / 100.0;
-  canvas.save();
-  canvas.translate(box.center.dx, box.center.dy);
-  canvas.scale(s);
-  canvas.translate(-50, -50);
-  canvas.clipRect(const Rect.fromLTWH(-2, -2, 104, 104));
-
-  final skinDark = _dark(skin, 0.3);
-  final skinShade = _dark(skin, 0.16);
-  final skinLite = _lite(skin, 0.16);
-  final coat = _dark(outfit, 0.12);
-  final coatDark = _dark(outfit, 0.5);
-  final coatLite = _lite(outfit, 0.22);
-  const rim = Color(0x8899D8FF); // cool rim light
-  final key = look.accent;
-
-  // ---------------- backdrop: hero-coloured spotlight ----------------
+  // spotlight so the operator sits in a lit pool instead of a flat void
   canvas.drawRect(
-      const Rect.fromLTWH(-2, -2, 104, 104),
+      box,
       fill
-        ..shader = Gradient.radial(const Offset(50, 34), 62, [
-          key.withValues(alpha: 0.30),
-          key.withValues(alpha: 0.07),
+        ..shader = Gradient.radial(
+            c.translate(0, -box.height * 0.05), box.shortestSide * 0.62, [
+          accent.withValues(alpha: 0.26),
+          accent.withValues(alpha: 0.06),
           const Color(0x00000000),
         ], [
           0.0,
@@ -1370,489 +1420,27 @@ void drawHeroPortrait(
           1.0
         ]));
   fill.shader = null;
-  // floor glow so the bust isn't floating in a void
+
+  canvas.save();
+  canvas.clipRect(box);
+  // frame: shift down a touch so the upward-pointing gun stays in the tile
+  final centre = c.translate(0, box.height * (0.10 + headBias));
+
+  // grounded shadow, matching the map's light direction
   canvas.drawOval(
-      const Rect.fromLTRB(14, 88, 86, 104),
-      fill..color = key.withValues(alpha: 0.16));
+      Rect.fromCenter(
+          center: centre.translate(r * 0.28, r * 0.85),
+          width: r * 2.3,
+          height: r * 0.9),
+      fill..color = const Color(0x55000000));
 
-  // ---------------- shoulders / torso ----------------
-  final torso = Path()
-    ..moveTo(50, 54)
-    ..cubicTo(66, 55, 78, 66, 84, 104)
-    ..lineTo(16, 104)
-    ..cubicTo(22, 66, 34, 55, 50, 54)
-    ..close();
-  canvas.drawPath(torso, fill..color = coat);
-  // key light from upper-left
-  canvas.drawPath(
-      Path()
-        ..moveTo(50, 54)
-        ..cubicTo(38, 56, 28, 68, 24, 104)
-        ..lineTo(40, 104)
-        ..cubicTo(42, 74, 46, 62, 50, 54)
-        ..close(),
-      fill..color = coatLite.withValues(alpha: 0.55));
-  // shadow side
-  canvas.drawPath(
-      Path()
-        ..moveTo(84, 104)
-        ..cubicTo(78, 70, 70, 58, 60, 55)
-        ..lineTo(66, 104)
-        ..close(),
-      fill..color = coatDark.withValues(alpha: 0.75));
-
-  // jacket collar, raised and angled
-  canvas.drawPath(
-      Path()
-        ..moveTo(50, 58)
-        ..lineTo(36, 56)
-        ..lineTo(40, 74)
-        ..close(),
-      fill..color = coatDark);
-  canvas.drawPath(
-      Path()
-        ..moveTo(50, 58)
-        ..lineTo(64, 56)
-        ..lineTo(60, 74)
-        ..close(),
-      fill..color = _dark(outfit, 0.32));
-  // zip line
-  stroke
-    ..color = coatDark
-    ..strokeWidth = 1.4;
-  canvas.drawLine(const Offset(50, 60), const Offset(50, 100), stroke);
-
-  // ---------------- chest rig ----------------
-  canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          const Rect.fromLTWH(34, 74, 32, 30), const Radius.circular(4)),
-      fill..color = _dark(outfit, 0.62));
-  for (final x in const [36.0, 47.0, 58.0]) {
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(x, 82, 8, 13), const Radius.circular(2)),
-        fill..color = _dark(outfit, 0.45));
-    canvas.drawRect(Rect.fromLTWH(x, 82, 8, 2.5),
-        fill..color = coatLite.withValues(alpha: 0.4));
-  }
-  // shoulder straps
-  stroke
-    ..color = _dark(outfit, 0.7)
-    ..strokeWidth = 4.5;
-  canvas.drawLine(const Offset(40, 60), const Offset(38, 76), stroke);
-  canvas.drawLine(const Offset(60, 60), const Offset(62, 76), stroke);
-  // hero indicator light
-  canvas.drawCircle(const Offset(50, 79), 3.2, fill..color = key);
-  canvas.drawCircle(const Offset(49.2, 78.2), 1.3,
-      fill..color = const Color(0xCCFFFFFF));
-
-  // ---------------- neck ----------------
-  canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          const Rect.fromLTWH(44, 40, 12, 18), const Radius.circular(4)),
-      fill..color = skinShade);
-  canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          const Rect.fromLTWH(44, 40, 12, 7), const Radius.circular(3)),
-      fill..color = skinDark); // shadow under the jaw
-
-  // ---------------- head ----------------
-  const cx = 50.0, cy = 27.0;
-  const rx = 13.0, ry = 16.0;
-  // ears
-  for (final side in const [-1.0, 1.0]) {
-    canvas.drawOval(
-        Rect.fromCenter(
-            center: Offset(cx + side * rx, cy + 3), width: 5, height: 8),
-        fill..color = side < 0 ? skin : skinShade);
-  }
-  // skull + jaw + chin
-  final face = Path()
-    ..moveTo(cx - rx, cy - 2)
-    ..cubicTo(cx - rx, cy - ry - 3, cx + rx, cy - ry - 3, cx + rx, cy - 2)
-    ..cubicTo(cx + rx, cy + 9, cx + 6, cy + ry, cx, cy + ry)
-    ..cubicTo(cx - 6, cy + ry, cx - rx, cy + 9, cx - rx, cy - 2)
-    ..close();
-  canvas.drawPath(face, fill..color = skin);
-  // key light on the left cheek/forehead
-  canvas.drawOval(
-      Rect.fromCenter(center: Offset(cx - 5, cy - 4), width: 14, height: 18),
-      fill..color = skinLite.withValues(alpha: 0.55));
-  // shadow down the right side + under the cheekbone
-  canvas.drawOval(
-      Rect.fromCenter(center: Offset(cx + 8, cy + 1), width: 11, height: 20),
-      fill..color = skinShade.withValues(alpha: 0.6));
-  canvas.drawOval(
-      Rect.fromCenter(center: Offset(cx + 5, cy + 7), width: 9, height: 6),
-      fill..color = skinDark.withValues(alpha: 0.3));
-  // brow ridge shadow
-  canvas.drawOval(
-      Rect.fromCenter(center: Offset(cx, cy - 5), width: 22, height: 5),
-      fill..color = skinShade.withValues(alpha: 0.45));
-
-  // brows — angled, heroic
-  stroke
-    ..color = _dark(look.hair, 0.25)
-    ..strokeWidth = 2.2
-    ..strokeCap = StrokeCap.round;
-  canvas.drawLine(Offset(cx - 9, cy - 4.4), Offset(cx - 3, cy - 6.2), stroke);
-  canvas.drawLine(Offset(cx + 3, cy - 6.2), Offset(cx + 9, cy - 4.4), stroke);
-
-  // eyes
-  for (final side in const [-1.0, 1.0]) {
-    final ex = cx + side * 5.8;
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset(ex, cy - 0.6), width: 7.4, height: 4.8),
-        fill..color = const Color(0xFFEFF2F6));
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset(ex, cy + 0.6), width: 7.4, height: 2.4),
-        fill..color = const Color(0x22000000)); // lower lid shadow
-    canvas.drawCircle(Offset(ex + side * 0.4, cy - 0.6), 2.1,
-        fill..color = look.eyes);
-    canvas.drawCircle(
-        Offset(ex + side * 0.4, cy - 0.6), 0.95, fill..color = const Color(0xFF0B0D12));
-    canvas.drawCircle(Offset(ex + side * 0.4 - 0.8, cy - 1.5), 0.75,
-        fill..color = const Color(0xF2FFFFFF));
-    stroke
-      ..color = const Color(0xAA10141C)
-      ..strokeWidth = 1.15;
-    canvas.drawLine(Offset(ex - 3.8, cy - 2.6), Offset(ex + 3.8, cy - 2.6), stroke);
-  }
-
-  // nose (bridge highlight + nostril shadow) and mouth
-  canvas.drawOval(
-      Rect.fromCenter(center: Offset(cx - 0.5, cy + 3), width: 3.4, height: 8),
-      fill..color = skinLite.withValues(alpha: 0.5));
-  canvas.drawOval(
-      Rect.fromCenter(center: Offset(cx + 1.8, cy + 6.4), width: 4, height: 3),
-      fill..color = skinDark.withValues(alpha: 0.5));
-  if (!look.beard) {
-    stroke
-      ..color = _dark(skin, 0.5)
-      ..strokeWidth = 1.5;
-    canvas.drawLine(Offset(cx - 3.4, cy + 10.4), Offset(cx + 3.4, cy + 10.4),
-        stroke);
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy + 12.6), width: 6, height: 2.4),
-        fill..color = skinShade.withValues(alpha: 0.5)); // chin crease
-  }
-
-  // ---------------- hair ----------------
-  if (look.longHair) {
-    canvas.drawPath(
-        Path()
-          ..moveTo(cx - rx - 3, cy - 4)
-          ..cubicTo(cx - rx - 7, cy + 22, cx - 10, cy + 30, cx - 4, cy + 30)
-          ..lineTo(cx - 6, cy + 8)
-          ..close(),
-        fill..color = _dark(look.hair, 0.18));
-    canvas.drawPath(
-        Path()
-          ..moveTo(cx + rx + 3, cy - 4)
-          ..cubicTo(cx + rx + 8, cy + 24, cx + 12, cy + 34, cx + 5, cy + 34)
-          ..lineTo(cx + 7, cy + 8)
-          ..close(),
-        fill..color = look.hair);
-  }
-  if (!look.bandana) {
-    // swept fringe with volume
-    final hair = Path()
-      ..moveTo(cx - rx - 1.5, cy + 1)
-      ..cubicTo(cx - rx - 2, cy - ry - 8, cx + rx + 2, cy - ry - 8, cx + rx + 1.5,
-          cy + 1)
-      ..cubicTo(cx + rx - 1, cy - 8, cx + 6, cy - 6, cx + 1, cy - 7)
-      ..cubicTo(cx - 6, cy - 8, cx - rx + 2, cy - 4, cx - rx - 1.5, cy + 1)
-      ..close();
-    canvas.drawPath(hair, fill..color = look.hair);
-    // strand highlights
-    stroke
-      ..color = _lite(look.hair, 0.34).withValues(alpha: 0.8)
-      ..strokeWidth = 1.5;
-    for (var i = 0; i < 3; i++) {
-      final ox = -7.0 + i * 5.0;
-      canvas.drawLine(Offset(cx + ox, cy - ry - 1), Offset(cx + ox + 4, cy - 7),
-          stroke);
-    }
-  }
-  if (look.beard) {
-    final beard = Path()
-      ..moveTo(cx - rx + 0.5, cy + 1)
-      ..cubicTo(cx - 12, cy + 20, cx + 12, cy + 20, cx + rx - 0.5, cy + 1)
-      ..cubicTo(cx + 9, cy + 13, cx - 9, cy + 13, cx - rx + 0.5, cy + 1)
-      ..close();
-    canvas.drawPath(beard, fill..color = look.hair);
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy + 12), width: 17, height: 11),
-        fill..color = look.hair);
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy + 8), width: 11, height: 3.6),
-        fill..color = _dark(look.hair, 0.2)); // moustache
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx - 4, cy + 11), width: 7, height: 5),
-        fill..color = _lite(look.hair, 0.18).withValues(alpha: 0.6));
-  }
-
-  // ---------------- hero signature ----------------
-  if (look.bandana) {
-    canvas.drawPath(
-        Path()
-          ..moveTo(cx - rx - 1.5, cy - 3)
-          ..cubicTo(cx - rx - 2, cy - ry - 6, cx + rx + 2, cy - ry - 6,
-              cx + rx + 1.5, cy - 3)
-          ..lineTo(cx + rx + 1, cy - 9)
-          ..lineTo(cx - rx - 1, cy - 9)
-          ..close(),
-        fill..color = const Color(0xFFC22B39));
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(cx, cy - 9), width: 30, height: 6),
-            const Radius.circular(2)),
-        fill..color = const Color(0xFFB4262B));
-    canvas.drawRect(
-        Rect.fromCenter(center: Offset(cx, cy - 9), width: 30, height: 1.6),
-        fill..color = const Color(0x55000000));
-    canvas.drawPath(
-        Path()
-          ..moveTo(cx - 15, cy - 8)
-          ..lineTo(cx - 22, cy + 8)
-          ..lineTo(cx - 16, cy + 9)
-          ..close(),
-        fill..color = const Color(0xFFB4262B));
-  }
-  if (look.visor) {
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(cx, cy - 1), width: 30, height: 9),
-            const Radius.circular(4.5)),
-        fill..color = const Color(0xE60E1621));
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(cx, cy - 1), width: 26, height: 5.5),
-            const Radius.circular(3)),
-        fill..color = const Color(0xDD37D0FF));
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(cx - 7, cy - 2), width: 9, height: 2),
-            const Radius.circular(1)),
-        fill..color = const Color(0xAAFFFFFF));
-    canvas.drawCircle(Offset(cx + 14, cy - 1), 2, fill..color = const Color(0xFF1B2531));
-  }
-  if (look.headset) {
-    stroke
-      ..color = const Color(0xFF1B2230)
-      ..strokeWidth = 2.8;
-    canvas.drawArc(
-        Rect.fromCenter(center: Offset(cx, cy - 1), width: 31, height: 33),
-        math.pi + 0.3, math.pi - 0.6, false, stroke);
-    for (final side in const [-1.0, 1.0]) {
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(cx + side * 14.5, cy + 1),
-                  width: 5.5,
-                  height: 9),
-              const Radius.circular(2.5)),
-          fill..color = const Color(0xFF232B3A));
-      canvas.drawCircle(Offset(cx + side * 14.5, cy + 1), 1.4,
-          fill..color = key.withValues(alpha: 0.9));
-    }
-    stroke
-      ..color = const Color(0xFF232B3A)
-      ..strokeWidth = 1.6;
-    canvas.drawLine(Offset(cx - 14, cy + 5), Offset(cx - 5, cy + 11), stroke);
-    canvas.drawCircle(Offset(cx - 4.4, cy + 11.4), 1.7, fill..color = key);
-  }
-
-  // ---------------- accessory ----------------
-  _drawAccessoryFront(canvas, const Offset(cx, cy), rx, ry, accessory, outfit,
-      fill, stroke);
-
-  // ---------------- rim light (last, over everything) ----------------
-  stroke
-    ..color = rim
-    ..strokeWidth = 1.6
-    ..strokeCap = StrokeCap.round;
-  canvas.drawArc(
-      Rect.fromCenter(center: const Offset(cx, cy), width: rx * 2, height: ry * 2),
-      -0.9, 1.5, false, stroke);
-  canvas.drawPath(
-      Path()
-        ..moveTo(62, 56)
-        ..cubicTo(74, 62, 80, 74, 84, 104),
-      stroke..color = rim.withValues(alpha: 0.45));
-
-  // ---------------- weapon ----------------
-  if (showWeapon && weapon != null) {
-    canvas.save();
-    canvas.translate(54, 88);
-    canvas.rotate(-0.38);
-    drawGunIcon(canvas, Offset.zero, 58, weapon, fill: fill, stroke: stroke);
-    canvas.restore();
-    canvas.drawCircle(const Offset(41, 95), 5.5,
-        fill..color = const Color(0xFF23262E));
-    canvas.drawCircle(const Offset(40, 93.6), 2.4,
-        fill..color = const Color(0xFF343A46));
-  }
-
+  // -pi/2 = facing the top of the tile
+  drawOperator(canvas, centre, r, -math.pi / 2, -math.pi / 2, outfit, skin,
+      accessory, weapon,
+      fill: fill,
+      stroke: stroke,
+      hero: hero,
+      vest: vest,
+      helmet: helmet);
   canvas.restore();
-}
-
-/// Head gear seen from the front (portraits only).
-void _drawAccessoryFront(Canvas canvas, Offset head, double hw, double hh,
-    int acc, Color outfit, Paint fill, Paint stroke) {
-  switch (acc) {
-    case 1: // cap
-      canvas.drawPath(
-          Path()
-            ..moveTo(head.dx - hw - 1, head.dy - 6)
-            ..cubicTo(head.dx - hw, head.dy - hh - 6, head.dx + hw,
-                head.dy - hh - 6, head.dx + hw + 1, head.dy - 6)
-            ..close(),
-          fill..color = _dark(outfit, 0.05));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx, head.dy - 6), width: 42, height: 7),
-              const Radius.circular(3)),
-          fill..color = _dark(outfit, 0.3));
-      canvas.drawCircle(Offset(head.dx, head.dy - hh - 2), 2.4,
-          fill..color = _dark(outfit, 0.45));
-      break;
-    case 2: // beanie
-      canvas.drawPath(
-          Path()
-            ..moveTo(head.dx - hw - 1, head.dy - 4)
-            ..cubicTo(head.dx - hw - 1, head.dy - hh - 8, head.dx + hw + 1,
-                head.dy - hh - 8, head.dx + hw + 1, head.dy - 4)
-            ..close(),
-          fill..color = outfit);
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx, head.dy - 5), width: 38, height: 8),
-              const Radius.circular(4)),
-          fill..color = _lite(outfit, 0.18));
-      canvas.drawCircle(Offset(head.dx, head.dy - hh - 8), 4,
-          fill..color = _lite(outfit, 0.3));
-      break;
-    case 3: // headband
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx, head.dy - 10), width: 38, height: 8),
-              const Radius.circular(3)),
-          fill..color = const Color(0xFFD8313F));
-      break;
-    case 4: // combat helmet
-      canvas.drawPath(
-          Path()
-            ..moveTo(head.dx - hw - 3, head.dy - 2)
-            ..cubicTo(head.dx - hw - 3, head.dy - hh - 10, head.dx + hw + 3,
-                head.dy - hh - 10, head.dx + hw + 3, head.dy - 2)
-            ..close(),
-          fill..color = const Color(0xFF3F462F));
-      canvas.drawOval(
-          Rect.fromCenter(
-              center: Offset(head.dx - 6, head.dy - 16), width: 16, height: 10),
-          fill..color = const Color(0x33FFFFFF));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx, head.dy - 3), width: 44, height: 6),
-              const Radius.circular(2)),
-          fill..color = const Color(0xFF262C1C));
-      // chin strap
-      stroke
-        ..color = const Color(0xFF262C1C)
-        ..strokeWidth = 2.4;
-      canvas.drawLine(Offset(head.dx - hw - 1, head.dy - 1),
-          Offset(head.dx - 5, head.dy + 15), stroke);
-      canvas.drawLine(Offset(head.dx + hw + 1, head.dy - 1),
-          Offset(head.dx + 5, head.dy + 15), stroke);
-      break;
-    case 5: // shades
-      for (final side in const [-1.0, 1.0]) {
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(
-                    center: Offset(head.dx + side * 8, head.dy - 0.5),
-                    width: 14,
-                    height: 10),
-                const Radius.circular(3)),
-            fill..color = const Color(0xFF11141A));
-      }
-      canvas.drawRect(
-          Rect.fromCenter(
-              center: Offset(head.dx, head.dy - 0.5), width: 6, height: 2.5),
-          fill..color = const Color(0xFF11141A));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx - 10, head.dy - 2),
-                  width: 5,
-                  height: 3),
-              const Radius.circular(1)),
-          fill..color = const Color(0x88A8D8FF));
-      break;
-    case 6: // mohawk
-      for (var i = 0; i < 7; i++) {
-        final t = i / 6.0;
-        final x = head.dx - 2 + (t - 0.5) * 4;
-        final h = 8 + 9 * math.sin(t * math.pi);
-        canvas.drawPath(
-            Path()
-              ..moveTo(x - 3, head.dy - hh + 2)
-              ..lineTo(x, head.dy - hh + 2 - h)
-              ..lineTo(x + 3, head.dy - hh + 2)
-              ..close(),
-            fill..color = const Color(0xFFE12F5F));
-      }
-      break;
-    case 7: // mask
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx, head.dy + 9), width: 30, height: 18),
-              const Radius.circular(7)),
-          fill..color = const Color(0xFF262B36));
-      canvas.drawCircle(Offset(head.dx - 9, head.dy + 10), 4,
-          fill..color = const Color(0xFF171B22));
-      canvas.drawCircle(Offset(head.dx + 9, head.dy + 10), 4,
-          fill..color = const Color(0xFF171B22));
-      break;
-    case 8: // crown
-      final crown = Path()..moveTo(head.dx - 16, head.dy - 12);
-      for (var i = 0; i < 3; i++) {
-        final x = head.dx - 16 + i * 16.0;
-        crown
-          ..lineTo(x + 4, head.dy - 22)
-          ..lineTo(x + 8, head.dy - 12)
-          ..lineTo(x + 12, head.dy - 22)
-          ..lineTo(x + 16, head.dy - 12);
-      }
-      crown.close();
-      canvas.drawPath(crown, fill..color = const Color(0xFFFFD75E));
-      canvas.drawRRect(
-          RRect.fromRectAndRadius(
-              Rect.fromCenter(
-                  center: Offset(head.dx, head.dy - 11), width: 36, height: 6),
-              const Radius.circular(2)),
-          fill..color = const Color(0xFFE8B830));
-      canvas.drawCircle(Offset(head.dx, head.dy - 11), 2.6,
-          fill..color = const Color(0xFFFF4D6D));
-      break;
-    case 9: // horns
-      for (final side in const [-1.0, 1.0]) {
-        canvas.drawPath(
-            Path()
-              ..moveTo(head.dx + side * 12, head.dy - 12)
-              ..quadraticBezierTo(head.dx + side * 26, head.dy - 22,
-                  head.dx + side * 22, head.dy - 34)
-              ..quadraticBezierTo(head.dx + side * 15, head.dy - 22,
-                  head.dx + side * 7, head.dy - 15)
-              ..close(),
-            fill..color = const Color(0xFFEDE6D2));
-      }
-      break;
-  }
 }

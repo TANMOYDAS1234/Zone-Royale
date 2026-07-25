@@ -2912,25 +2912,26 @@ class _ShopThumbPainter extends CustomPainter {
       drawGunIcon(canvas, Offset.zero, size.width * 0.92, weapon,
           fill: fill, stroke: stroke);
     } else if (headOnly) {
-      // ACCESSORY tiles: a zoomed front-facing head wearing the item, so a
-      // Crown reads as a crown and a Mask reads as a mask.
-      drawHeroPortrait(canvas, rect.translate(0, size.height * 0.22).inflate(
-          size.width * 0.30),
+      // ACCESSORY tiles: the same in-game operator, cropped in on the head so
+      // you can actually see the hat/mask/shades you're buying.
+      drawOperatorTile(canvas, rect,
           outfit: outfit,
           skin: skin,
           accessory: accessory,
-          hero: hero < 0 ? 0 : hero,
-          showWeapon: false);
-    } else {
-      // character tiles: a front-facing bust. A top-down body in a 60px tile
-      // was unreadable — you could not tell one hero from another.
-      drawHeroPortrait(canvas, rect.deflate(size.width * 0.06),
-          outfit: outfit,
-          skin: skin,
-          accessory: accessory,
-          hero: hero < 0 ? 0 : hero,
+          hero: hero,
           weapon: weapon,
-          showWeapon: false);
+          glow: accent,
+          zoom: 2.1,
+          headBias: 0.30);
+    } else {
+      // character / skin tiles: the operator exactly as they look in a match
+      drawOperatorTile(canvas, rect,
+          outfit: outfit,
+          skin: skin,
+          accessory: accessory,
+          hero: hero,
+          weapon: weapon,
+          glow: accent);
     }
     canvas.restore();
 
@@ -2969,15 +2970,16 @@ class OperatorPreviewPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Front-facing bust — this is the player looking at THEIR operator, so it
-    // has to look like a person, not a gameplay sprite seen from a drone.
-    final box = Rect.fromLTWH(0, 0, size.width, size.height).deflate(4);
-    drawHeroPortrait(canvas, box,
+    // The real in-game operator, lit and framed. This is the honest preview:
+    // exactly the character you'll be looking at during the match.
+    drawOperatorTile(canvas, Offset.zero & size,
         outfit: outfit,
         skin: skin,
         accessory: accessory,
         hero: hero,
-        weapon: weapon);
+        weapon: weapon,
+        glow: Color(kHeroes[hero.clamp(0, kHeroes.length - 1)].color),
+        zoom: 1.25);
   }
 
   @override
