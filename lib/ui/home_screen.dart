@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../game/config.dart';
 import '../game/profile.dart';
+import '../game/sfx.dart';
 import '../game/royale_game.dart';
 import '../net/net_arena.dart';
 import 'map_select.dart';
@@ -294,6 +295,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () => setState(() {
+        Sfx.tap();
+                      Sfx.tap();
                       p.difficulty = i;
                       p.save();
                     }),
@@ -341,7 +344,10 @@ class _HomeScreenState extends State<HomeScreen> {
     const icons = [Icons.groups, Icons.shield, Icons.public];
     const subs = ['FAST-PACED SKIRMISH', 'TACTICAL SQUAD FIGHT', 'FULL BATTLE ROYALE'];
     return GestureDetector(
-      onTap: () => setState(() => _mode = i),
+      onTap: () {
+        Sfx.select();
+        setState(() => _mode = i);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
@@ -416,6 +422,7 @@ class _HomeScreenState extends State<HomeScreen> {
         : kMapThemes[(choice - 1).clamp(0, kMapThemes.length - 1)].name;
     return GestureDetector(
       onTap: () => setState(() {
+        Sfx.tap();
         Profile.instance.mapChoice = choice;
         Profile.instance.save();
       }),

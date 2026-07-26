@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:ui';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -40,6 +42,10 @@ class Profile {
   /// many permanent marks stay on the ground — the dial to turn if the game
   /// ever feels like it is stuttering on your phone.
   int quality = 1;
+  /// Menu/background music level, 0 = off.
+  double musicVolume = 0.5;
+  /// Everything else — gunfire, UI clicks, explosions.
+  double sfxVolume = 0.9;
 
   // ---- on-screen controller ----
   double stickScale = 1.0; // 0.8 .. 1.35
@@ -319,6 +325,8 @@ class Profile {
       orientation = (p.getInt('orientation') ?? 0).clamp(0, 2);
       shake = (p.getDouble('shake') ?? 0.5).clamp(0.0, 1.0);
       quality = (p.getInt('quality') ?? 1).clamp(0, kQualities.length - 1);
+      musicVolume = (p.getDouble('musicVol') ?? 0.5).clamp(0.0, 1.0);
+      sfxVolume = (p.getDouble('sfxVol') ?? 0.9).clamp(0.0, 1.0);
       streak = p.getInt('streak') ?? 0;
       streakDay = p.getInt('streakDay') ?? 0;
       streakClaimedDay = p.getInt('streakClaimed') ?? -1;
@@ -402,6 +410,8 @@ class Profile {
       await p.setInt('orientation', orientation);
       await p.setDouble('shake', shake);
       await p.setInt('quality', quality);
+      await p.setDouble('musicVol', musicVolume);
+      await p.setDouble('sfxVol', sfxVolume);
       await p.setInt('streak', streak);
       await p.setInt('streakDay', streakDay);
       await p.setInt('streakClaimed', streakClaimedDay);
@@ -427,6 +437,215 @@ class Profile {
     } catch (_) {
       // Ignore write failures — stats are best-effort.
     }
+  }
+
+  // ---------------------------------------------------------------- backup
+  //
+  // Progress lives in SharedPreferences, which Android's Auto Backup copies to
+  // the player's Google Drive and restores on a reinstall or a new phone — no
+  // account, no server, no cost. See android/app/src/main/res/xml/.
+  //
+  // Auto Backup only restores on a FRESH install, though, and only if the
+  // device has backup switched on. The transfer code below covers everything
+  // it can't: copy it, paste it anywhere, get your profile back.
+
+  /// The WHOLE profile — not just the wallet. Coming back on a new phone
+  /// should hand you the game exactly as you left it: the same operator, skin,
+  /// accessory, hero and starting gun, the same control layout you dragged out
+  /// (which both solo and online read), the same graphics fidelity, difficulty,
+  /// shake, fire mode and handedness, and the same missions and streak.
+  Map<String, dynamic> toBackup() => {
+        'v': 2,
+        // identity + what you have
+        'name': name,
+        'level': level,
+        'xp': xp,
+        'coins': coins,
+        'owned': owned.toList(),
+        // equipped look and loadout
+        'outfit': outfit,
+        'skin': skin,
+        'accessory': accessory,
+        'weapon': startWeapon.index,
+        'hero': hero,
+        // settings — every one of them, for solo and online alike
+        'fireAuto': fireAuto,
+        'autoSwap': autoSwapWeapons,
+        'leftHanded': leftHanded,
+        'quality': quality,
+        'difficulty': difficulty,
+        'musicVol': musicVolume,
+        'sfxVol': sfxVolume,
+        'shake': shake,
+        'matchMode': matchMode,
+        'mapChoice': mapChoice,
+        'orientation': orientation,
+        // the control layout, exactly as placed in the editor
+        'hudPos': {
+          for (final e in hudPos.entries) e.key: [e.value[0], e.value[1]]
+        },
+        'hudScale': hudScale,
+        'hudOpacity': hudOpacity,
+        // progression bookkeeping
+        'matches': matches,
+        'wins': wins,
+        'kills': kills,
+        'best': bestPlacement,
+        'streak': streak,
+        'streakDay': streakDay,
+        'streakClaimed': streakClaimedDay,
+        'missionDay': missionDay,
+        'missions': missions.map((m) => m.encode()).toList(),
+      };
+
+  void applyBackup(Map<String, dynamic> j) {
+    int i(String k, int fallback) {
+      final v = j[k];
+      return v is int ? v : (v is num ? v.toInt() : fallback);
+    }
+
+    double d(String k, double fallback) {
+      final v = j[k];
+      return v is num ? v.toDouble() : fallback;
+    }
+
+    bool b(String k, bool fallback) {
+      final v = j[k];
+      return v is bool ? v : fallback;
+    }
+
+    name = (j['name'] as String?)?.trim().isNotEmpty == true
+        ? j['name'] as String
+        : name;
+    level = i('level', level).clamp(1, 999);
+    xp = i('xp', xp).clamp(0, 1 << 30);
+    coins = i('coins', coins).clamp(0, 1 << 30);
+    final ow = j['owned'];
+    if (ow is List) {
+      owned
+        ..clear()
+        ..addAll(ow.whereType<String>());
+    }
+
+    outfit = i('outfit', outfit);
+    skin = i('skin', skin);
+    accessory = i('accessory', accessory);
+    final w = i('weapon', startWeapon.index);
+    if (w >= 0 && w < WeaponId.values.length) startWeapon = WeaponId.values[w];
+    hero = i('hero', hero).clamp(0, kHeroes.length - 1);
+
+    fireAuto = b('fireAuto', fireAuto);
+    autoSwapWeapons = b('autoSwap', autoSwapWeapons);
+    leftHanded = b('leftHanded', leftHanded);
+    quality = i('quality', quality).clamp(0, kQualities.length - 1);
+    musicVolume = d('musicVol', musicVolume).clamp(0.0, 1.0);
+    sfxVolume = d('sfxVol', sfxVolume).clamp(0.0, 1.0);
+    difficulty = i('difficulty', difficulty).clamp(0, kDifficulties.length - 1);
+    shake = d('shake', shake).clamp(0.0, 1.0);
+    matchMode = i('matchMode', matchMode);
+    mapChoice = i('mapChoice', mapChoice);
+    orientation = i('orientation', orientation).clamp(0, 2);
+
+    final hp = j['hudPos'];
+    if (hp is Map) {
+      hudPos.clear();
+      hp.forEach((k, v) {
+        if (k is String && v is List && v.length == 2) {
+          final x = v[0], y = v[1];
+          if (x is num && y is num) hudPos[k] = [x.toDouble(), y.toDouble()];
+        }
+      });
+    }
+    void readMap(String key, Map<String, double> into) {
+      final m = j[key];
+      if (m is! Map) return;
+      into.clear();
+      m.forEach((k, v) {
+        if (k is String && v is num) into[k] = v.toDouble();
+      });
+    }
+
+    readMap('hudScale', hudScale);
+    readMap('hudOpacity', hudOpacity);
+
+    matches = i('matches', matches);
+    wins = i('wins', wins);
+    kills = i('kills', kills);
+    bestPlacement = i('best', bestPlacement);
+    streak = i('streak', streak);
+    streakDay = i('streakDay', streakDay);
+    streakClaimedDay = i('streakClaimed', streakClaimedDay);
+    missionDay = i('missionDay', missionDay);
+    final ms = j['missions'];
+    if (ms is List) {
+      final decoded =
+          ms.whereType<String>().map(Mission.decode).whereType<Mission>().toList();
+      if (decoded.isNotEmpty) missions = decoded;
+    }
+  }
+
+  /// A short, copy-pasteable string that carries this profile. Gzipped so it
+  /// stays under a couple hundred characters.
+  String exportCode() {
+    final json = jsonEncode(toBackup());
+    try {
+      return 'ZR1-${base64Url.encode(gzip.encode(utf8.encode(json)))}';
+    } catch (_) {
+      // gzip is unavailable on some platforms; plain is still valid
+      return 'ZR0-${base64Url.encode(utf8.encode(json))}';
+    }
+  }
+
+  /// Returns true if the code was understood and applied.
+  Future<bool> importCode(String raw) async {
+    final code = raw.trim().replaceAll(RegExp(r'\s'), '');
+    try {
+      final String json;
+      if (code.startsWith('ZR1-')) {
+        json = utf8.decode(gzip.decode(base64Url.decode(code.substring(4))));
+      } else if (code.startsWith('ZR0-')) {
+        json = utf8.decode(base64Url.decode(code.substring(4)));
+      } else {
+        return false;
+      }
+      final map = jsonDecode(json);
+      if (map is! Map<String, dynamic>) return false;
+      applyBackup(map);
+      await save();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Wipe progress and start over.
+  ///
+  /// Deliberately NOT offered on launch or after a restore — a "start again?"
+  /// prompt in the flow you walk through every day is a trap, and one mistap
+  /// costs a player everything. This is reached from settings, behind an
+  /// explicit confirmation, and keeps the control layout and screen settings
+  /// (nobody wants to re-drag their joysticks to reset a coin balance).
+  Future<void> resetProgress() async {
+    level = 1;
+    xp = 0;
+    coins = 0;
+    matches = 0;
+    wins = 0;
+    kills = 0;
+    bestPlacement = 0;
+    streak = 0;
+    streakDay = 0;
+    streakClaimedDay = -1;
+    owned.clear();
+    missions = [];
+    missionDay = 0;
+    outfit = 0;
+    skin = 0;
+    accessory = 0;
+    hero = 0;
+    startWeapon = WeaponId.smg;
+    ensureMissions();
+    await save();
   }
 
   MatchRewards recordResult({

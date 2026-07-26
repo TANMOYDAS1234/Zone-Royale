@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../game/sfx.dart';
+
 /// ZONE ROYALE design system — one place for every colour, type style and
 /// surface treatment in the app. Screens compose from here instead of
 /// hard-coding hexes, so a brand tweak is a one-file change.
@@ -320,7 +322,12 @@ class ZrGhostButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: onTap == null
+          ? null
+          : () {
+              Sfx.tap();
+              onTap!();
+            },
       behavior: HitTestBehavior.opaque,
       child: Container(
         height: height,

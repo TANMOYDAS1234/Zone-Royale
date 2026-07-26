@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../game/config.dart';
 import '../game/profile.dart';
+import '../game/sfx.dart';
 import '../game/royale_game.dart';
 import 'shell.dart';
 import 'theme.dart';
@@ -211,7 +212,10 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
               active: Screen.start,
               subtitle: 'MAP INTEL',
               trailing: GestureDetector(
-                onTap: () => Navigator.of(context).maybePop(),
+                onTap: () {
+                  Sfx.back();
+                  Navigator.of(context).maybePop();
+                },
                 behavior: HitTestBehavior.opaque,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -277,6 +281,9 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
                 if (i > 0) const SizedBox(height: 7),
                 GestureDetector(
                   onTap: () => setState(() {
+        Sfx.select();
+                  Sfx.tap();
+                    Sfx.tap();
                     p.difficulty = i;
                     p.save();
                   }),
@@ -338,6 +345,10 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
                     Expanded(
                       child: GestureDetector(
                         onTap: () => setState(() {
+        Sfx.select();
+                  Sfx.tap();
+                          Sfx.tap();
+                    Sfx.tap();
                           p.matchMode = i;
                           p.save();
                         }),
@@ -368,6 +379,8 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
               // --- random drop ---
               GestureDetector(
                 onTap: () => setState(() {
+        Sfx.select();
+                  Sfx.tap();
                   p.mapChoice = 0;
                   p.save();
                 }),
@@ -497,6 +510,7 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
         Profile.instance.matchMode.clamp(0, kMatchModes.length - 1)];
     return GestureDetector(
       onTap: () => setState(() {
+        Sfx.select();
         Profile.instance.mapChoice = choice;
         Profile.instance.save();
       }),

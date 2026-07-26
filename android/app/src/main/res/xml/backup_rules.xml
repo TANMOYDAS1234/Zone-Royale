@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 and below (Auto Backup for Apps).
+
+  Everything the player owns — level, XP, coins, purchases, missions, control
+  layout — lives in one SharedPreferences file, so backing that up restores a
+  complete profile after a reinstall or a new phone.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="." />
+</full-backup-content>

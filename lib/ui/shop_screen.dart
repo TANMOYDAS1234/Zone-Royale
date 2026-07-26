@@ -58,13 +58,14 @@ class _ShopScreenState extends State<ShopScreen> {
         content: Text('NOT ENOUGH COINS  ·  NEED ${it.price - p.coins} MORE',
             style: ZR.display(16, color: ZR.danger)),
       ));
+      Sfx.deny();
       return;
     }
     setState(() {
       p.buy(it.id);
       _equip(it.id);
     });
-    Sfx.pickup();
+    Sfx.buy();
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
       backgroundColor: ZR.surface,
       duration: const Duration(seconds: 2),
@@ -93,6 +94,7 @@ class _ShopScreenState extends State<ShopScreen> {
         break;
     }
     p.save();
+    Sfx.tap();
     setState(() {});
   }
 
@@ -259,7 +261,10 @@ class _ShopScreenState extends State<ShopScreen> {
         children: [
           for (final c in _Cat.values) ...[
             GestureDetector(
-              onTap: () => setState(() => _cat = c),
+              onTap: () {
+                Sfx.select();
+                setState(() => _cat = c);
+              },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 margin: const EdgeInsets.only(right: 8),

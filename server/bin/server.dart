@@ -613,15 +613,26 @@ class Room {
     for (var i = 0; i < gear; i++) {
       final spot = _openSpot();
       final roll = _rng.nextDouble();
-      // grenades are in the mix now, the way they are offline — without them
-      // you fought a whole online match on the two you spawned with
-      final kind = roll < 0.30
-          ? 3
-          : roll < 0.55
-              ? 4
-              : roll < 0.78
-                  ? 5
-                  : 6;
+      // Grenades are in the mix the way they are offline — but only if the
+      // room allows them. Whoever set the rules (the host, or the first
+      // player into a quick match) decides, exactly like every other
+      // restriction; with grenades off the roll redistributes to armour.
+      final int kind;
+      if (allowGrenades) {
+        kind = roll < 0.30
+            ? 3
+            : roll < 0.55
+                ? 4
+                : roll < 0.78
+                    ? 5
+                    : 6;
+      } else {
+        kind = roll < 0.38
+            ? 3
+            : roll < 0.68
+                ? 4
+                : 5;
+      }
       loot.add(Loot(_lootId++, spot[0], spot[1], kind, -1));
     }
   }

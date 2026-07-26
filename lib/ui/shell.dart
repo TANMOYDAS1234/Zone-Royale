@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../game/char_art.dart';
 import '../game/config.dart';
 import '../game/profile.dart';
+import '../game/sfx.dart';
 import '../game/royale_game.dart';
 import 'logo.dart';
 import 'theme.dart';
@@ -73,7 +74,10 @@ class ZrTopBar extends StatelessWidget {
                 _NavTab(
                   label: t[1],
                   active: active == t[0],
-                  onTap: () => game.screen.value = t[0],
+                  onTap: () {
+                    Sfx.select();
+                    game.screen.value = t[0];
+                  },
                 ),
               const SizedBox(width: 14),
             ],
@@ -89,7 +93,11 @@ class ZrTopBar extends StatelessWidget {
                 color: ZR.primary),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: onSettings ?? () => game.screen.value = Screen.profile,
+              onTap: onSettings ??
+                  () {
+                    Sfx.select();
+                    game.screen.value = Screen.profile;
+                  },
               behavior: HitTestBehavior.opaque,
               child: Container(
                 padding: const EdgeInsets.all(8),
@@ -217,7 +225,10 @@ class ZrBottomNav extends StatelessWidget {
                     icon: _icon(it[0]),
                     label: it[1],
                     active: active == it[0],
-                    onTap: () => game.screen.value = it[0],
+                    onTap: () {
+                      Sfx.select();
+                      game.screen.value = it[0];
+                    },
                   ),
                 ),
             ],

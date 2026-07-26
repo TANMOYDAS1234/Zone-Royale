@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../game/config.dart';
 import '../game/profile.dart';
+import '../game/sfx.dart';
 import '../game/royale_game.dart';
 import 'game_ui.dart' show ControlsEditor;
 import 'quality_preview.dart';
@@ -346,12 +348,105 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     p.save();
                   }),
               'Swaps the move and aim sticks'),
+          const SizedBox(height: 10),
+          // Music and effects are separate on purpose: plenty of players want
+          // the gunfire and none of the soundtrack, or the other way round.
+          _volume(
+            'MENU MUSIC',
+            Icons.music_note,
+            p.musicVolume,
+            (v) {
+              setState(() => p.musicVolume = v);
+              Sfx.applyMusicVolume();
+            },
+            () => p.save(),
+          ),
+          _volume(
+            'GAME & UI SOUND',
+            Icons.volume_up,
+            p.sfxVolume,
+            (v) => setState(() => p.sfxVolume = v),
+            () {
+              p.save();
+              Sfx.tap(); // hear the level you just picked
+            },
+          ),
           const SizedBox(height: 8),
           ZrGhostButton(
             label: 'CUSTOMISE CONTROL PLACEMENT',
             icon: Icons.open_with,
-            onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const ControlsEditor())),
+            onTap: () {
+              Sfx.select();
+              Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const ControlsEditor()));
+            },
+          ),
+        ]),
+        const SizedBox(height: 10),
+        _card('PROGRESS & CLOUD SAVE', Icons.cloud_done, [
+          Row(
+            children: [
+              const Icon(Icons.cloud_done, size: 14, color: ZR.success),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                    'AUTO-BACKUP IS ON — YOUR LEVEL, COINS, PURCHASES, '
+                    'LOADOUT, CONTROL LAYOUT AND EVERY SETTING RESTORE '
+                    'AUTOMATICALLY WHEN YOU REINSTALL OR SET UP A NEW PHONE.',
+                    style: ZR.mono(8, color: Colors.white54, spacing: 0.3)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text('TRANSFER CODE', style: ZR.mono(8, color: Colors.white38)),
+          const SizedBox(height: 2),
+          Text(
+              'For moving to a phone on a different account, or restoring '
+              'without waiting for a reinstall.',
+              style: ZR.mono(8, color: Colors.white24, spacing: 0.3)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ZrGhostButton(
+                  label: 'COPY MY CODE',
+                  icon: Icons.copy_all,
+                  height: 40,
+                  onTap: _copyBackupCode,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ZrGhostButton(
+                  label: 'RESTORE',
+                  icon: Icons.download,
+                  height: 40,
+                  color: ZR.primary,
+                  onTap: _restoreFromCode,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Deliberately at the bottom, behind two taps. Never offered on
+          // launch — that is where people tap without reading.
+          GestureDetector(
+            onTap: _confirmReset,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: ZR.danger.withValues(alpha: 0.4)),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.restart_alt, size: 14, color: ZR.danger),
+                const SizedBox(width: 7),
+                Text('START OVER FROM SCRATCH',
+                    style: ZR.display(15, color: ZR.danger, spacing: 1)),
+              ]),
+            ),
           ),
         ]),
         const SizedBox(height: 10),
@@ -366,6 +461,146 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ],
     );
     return scroll ? SingleChildScrollView(child: body) : body;
+  }
+
+  /// A labelled volume slider that reads OFF at zero, so "no music" is an
+  /// obvious state rather than a slider you assume is broken.
+  Widget _volume(String label, IconData icon, double value,
+      ValueChanged<double> onChanged, VoidCallback onDone) {
+    final off = value <= 0.001;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(off ? Icons.volume_off : icon,
+                  size: 13, color: off ? Colors.white30 : ZR.secondary),
+              const SizedBox(width: 7),
+              Text(label, style: ZR.mono(8, color: Colors.white38)),
+              const Spacer(),
+              Text(off ? 'OFF' : '${(value * 100).round()}%',
+                  style: ZR.display(15,
+                      color: off ? Colors.white30 : ZR.primary)),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 3,
+              overlayShape: SliderComponentShape.noOverlay,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
+            ),
+            child: Slider(
+              value: value.clamp(0.0, 1.0),
+              activeColor: ZR.primary,
+              inactiveColor: Colors.white12,
+              onChanged: onChanged,
+              onChangeEnd: (_) => onDone(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------- cloud save
+  void _toast(String msg, {Color color = ZR.primary}) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      backgroundColor: ZR.surface,
+      duration: const Duration(seconds: 3),
+      content: Text(msg, style: ZR.display(16, color: color)),
+    ));
+  }
+
+  Future<void> _copyBackupCode() async {
+    final code = Profile.instance.exportCode();
+    await Clipboard.setData(ClipboardData(text: code));
+    if (!mounted) return;
+    _toast('BACKUP CODE COPIED — PASTE IT SOMEWHERE SAFE');
+  }
+
+  Future<void> _restoreFromCode() async {
+    final controller = TextEditingController();
+    final code = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ZR.surface,
+        title: Text('RESTORE PROGRESS', style: ZR.display(22)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Paste the transfer code from your other device.',
+                style: ZR.body(12, color: Colors.white60)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              maxLines: 3,
+              style: ZR.mono(10, color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'ZR1-…',
+                hintStyle: ZR.mono(10, color: Colors.white24),
+                enabledBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white24)),
+                focusedBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(color: ZR.primary)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('CANCEL', style: ZR.display(16, color: Colors.white38))),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(controller.text),
+              child: Text('RESTORE', style: ZR.display(16, color: ZR.primary))),
+        ],
+      ),
+    );
+    if (code == null || code.trim().isEmpty) return;
+    final ok = await Profile.instance.importCode(code);
+    if (!mounted) return;
+    if (ok) {
+      setState(() {});
+      _toast('PROGRESS RESTORED', color: ZR.success);
+    } else {
+      _toast("THAT CODE DIDN'T LOOK RIGHT", color: ZR.danger);
+    }
+  }
+
+  Future<void> _confirmReset() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ZR.surface,
+        title: Text('START OVER?', style: ZR.display(22, color: ZR.danger)),
+        content: Text(
+            'This erases your level, coins, stats and everything you have '
+            'bought. Your control layout and screen settings are kept.\n\n'
+            'Copy your transfer code first if you might want this back — '
+            'there is no undo.',
+            style: ZR.body(12, color: Colors.white70, height: 1.4)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: Text('KEEP MY PROGRESS',
+                  style: ZR.display(16, color: ZR.primary))),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text('ERASE EVERYTHING',
+                  style: ZR.display(16, color: ZR.danger))),
+        ],
+      ),
+    );
+    if (sure != true) return;
+    await Profile.instance.resetProgress();
+    if (!mounted) return;
+    setState(() {});
+    _toast('PROGRESS RESET', color: ZR.danger);
   }
 
   Widget _card(String title, IconData icon, List<Widget> children) {
@@ -492,7 +727,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
           if (i > 0) const SizedBox(width: 6),
           Expanded(
             child: GestureDetector(
-              onTap: () => onSel(i),
+              onTap: () {
+                Sfx.tap();
+                onSel(i);
+              },
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 padding: const EdgeInsets.symmetric(vertical: 9),

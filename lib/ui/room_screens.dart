@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../game/config.dart';
+import '../game/sfx.dart';
 import '../game/royale_game.dart';
 import '../net/net_client.dart';
 import 'map_select.dart';
@@ -117,7 +118,10 @@ class RoomConfigView extends StatelessWidget {
   }
 
   Widget _backButton(BuildContext context) => GestureDetector(
-        onTap: () => Navigator.of(context).maybePop(),
+        onTap: () {
+          Sfx.back();
+          Navigator.of(context).maybePop();
+        },
         behavior: HitTestBehavior.opaque,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -343,7 +347,10 @@ class RoomConfigView extends StatelessWidget {
         ]),
         const SizedBox(height: 5),
         GestureDetector(
-          onTap: onTap,
+          onTap: () {
+            Sfx.select();
+            onTap();
+          },
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
             decoration: BoxDecoration(
@@ -382,7 +389,10 @@ class RoomConfigView extends StatelessWidget {
               if (i > 0) const SizedBox(width: 7),
               Expanded(
                 child: GestureDetector(
-                  onTap: () => onSel(values[i]),
+                  onTap: () {
+                    Sfx.tap();
+                    onSel(values[i]);
+                  },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     padding: const EdgeInsets.symmetric(vertical: 10),
@@ -413,7 +423,10 @@ class RoomConfigView extends StatelessWidget {
 
   Widget _equipChip(String label, bool on, String key) {
     return GestureDetector(
-      onTap: () => onToggle(key),
+      onTap: () {
+        Sfx.tap();
+        onToggle(key);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),

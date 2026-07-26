@@ -114,17 +114,39 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     // re-request after the window exists (the pre-runApp call can be too early)
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _useHighRefreshRate());
+    // One hook for the whole front end: the menu bed plays on every menu
+    // screen and stops the moment a match starts, and each change gets a
+    // whoosh under it so moving between screens feels like movement.
+    game.screen.addListener(_onScreenChanged);
+  }
+
+  void _onScreenChanged() {
+    final s = game.screen.value;
+    if (s == Screen.playing) {
+      Sfx.stopMenuMusic();
+    } else {
+      Sfx.whoosh(vol: 0.35);
+      Sfx.startMenuMusic();
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Android reverts to the system refresh rate when we're backgrounded
-    if (state == AppLifecycleState.resumed) _useHighRefreshRate();
+    if (state == AppLifecycleState.resumed) {
+      _useHighRefreshRate();
+      if (game.screen.value != Screen.playing) Sfx.startMenuMusic();
+    } else {
+      // never keep playing music over another app
+      Sfx.stopMenuMusic(keepWanted: true);
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    game.screen.removeListener(_onScreenChanged);
+    Sfx.stopMenuMusic();
     _focus.dispose();
     super.dispose();
   }
@@ -231,7 +253,12 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
               if (_showSplash)
                 Positioned.fill(
                   child: SplashScreen(
-                    onDone: () => setState(() => _showSplash = false),
+                    onDone: () {
+                      setState(() => _showSplash = false);
+                      // the bed starts as the front end appears, not over the
+                      // splash — the first thing you hear should be the menu
+                      Sfx.startMenuMusic();
+                    },
                   ),
                 ),
             ],

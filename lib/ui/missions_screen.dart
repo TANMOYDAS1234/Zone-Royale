@@ -52,7 +52,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
   void _claim(int i) {
     final r = Profile.instance.claimMission(i);
     if (r == null) return;
-    Sfx.pickup();
+    Sfx.buy();
     setState(() {});
     ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
       backgroundColor: ZR.surface,
