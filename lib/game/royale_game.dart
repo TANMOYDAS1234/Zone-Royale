@@ -1619,7 +1619,8 @@ class RoyaleGame extends FlameGame {
 
   void _addKillLine(Character killer, Character victim) {
     killLog.add(KillFeedLine(killer.name, victim.name, killer == player, 4.0));
-    if (killLog.length > 5) killLog.removeAt(0);
+    // three lines max — the feed shares the top-left corner with the HP bars
+    if (killLog.length > 3) killLog.removeAt(0);
   }
 
   void _checkEnd() {

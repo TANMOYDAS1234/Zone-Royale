@@ -218,6 +218,7 @@ class Grenade {
 
 // A ground pickup.
 // kind: 0 medkit · 1 weapon · 2 airdrop · 3 vest · 4 helmet · 5 shield wall
+//       6 grenade
 int _lootId = 1;
 
 class Loot {
@@ -612,11 +613,15 @@ class Room {
     for (var i = 0; i < gear; i++) {
       final spot = _openSpot();
       final roll = _rng.nextDouble();
-      final kind = roll < 0.38
+      // grenades are in the mix now, the way they are offline — without them
+      // you fought a whole online match on the two you spawned with
+      final kind = roll < 0.30
           ? 3
-          : roll < 0.68
+          : roll < 0.55
               ? 4
-              : 5;
+              : roll < 0.78
+                  ? 5
+                  : 6;
       loot.add(Loot(_lootId++, spot[0], spot[1], kind, -1));
     }
   }
@@ -1141,6 +1146,11 @@ class Room {
         if (l.kind == 5) { // shield wall charge
           if (p.walls >= wallMax) continue;
           p.walls++;
+          return true;
+        }
+        if (l.kind == 6) { // grenade
+          if (p.grenades >= 5) continue;
+          p.grenades++;
           return true;
         }
         if (p.slots.contains(l.wi)) continue;

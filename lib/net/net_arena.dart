@@ -1415,7 +1415,9 @@ class _ArenaViewState extends State<_ArenaView>
           0,
           _FeedLine(killer?.name ?? 'THE ZONE', p.name,
               killer != null && killer.id == c.myId));
-      if (_feed.length > 5) _feed.removeLast();
+      // three lines max: the feed shares the top-left corner with the health
+      // bars, and a five-deep feed grows right into them
+      if (_feed.length > 3) _feed.removeLast();
     }
     // my own streak — same thresholds the solo match uses
     final mine = risers.where((p) => p.id == c.myId).length;
@@ -2573,72 +2575,169 @@ class _ArenaPainter extends CustomPainter {
 
   // ------------------------------------------------------------------ loot
   void _drawLoot(Canvas canvas, bool Function(double, double, [double]) vis) {
+    // Ground loot is drawn with the SAME art the solo match uses — a plate
+    // carrier, a helmet dome, a folded shield slab, the real gun silhouette —
+    // instead of the coloured boxes this used to draw. Loot you can identify
+    // at a glance is the whole point of walking over to it.
     for (final l in c.loot) {
       if (!vis(l.x, l.y, 40)) continue;
-      final o = Offset(l.x, l.y);
+      // bob + pulse, keyed off the world position so each piece is out of
+      // phase with its neighbours and the whole field doesn't breathe as one
+      final bob = (l.x * 0.013 + l.y * 0.021) % 6.28;
+      final o = Offset(l.x, l.y + math.sin(time * 3 + bob) * 3);
+      final pulse = 0.55 + 0.45 * math.sin(time * 4 + bob);
       canvas.drawOval(
-          Rect.fromCenter(center: o.translate(3, 8), width: 30, height: 12),
-          _fill..color = Colors.black.withValues(alpha: 0.3));
-      if (l.kind == 0) {
-        canvas.drawCircle(o, 20,
-            _fill..color = const Color(0xFF57E389).withValues(alpha: 0.16));
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(center: o, width: 24, height: 24),
-                const Radius.circular(5)),
-            _fill..color = const Color(0xFFF2F5F8));
-        canvas.drawRect(Rect.fromCenter(center: o, width: 15, height: 5),
-            _fill..color = const Color(0xFFE23B3B));
-        canvas.drawRect(Rect.fromCenter(center: o, width: 5, height: 15),
-            _fill..color = const Color(0xFFE23B3B));
-        continue;
+          Rect.fromCenter(center: o.translate(3, 9), width: 26, height: 10),
+          _fill..color = Colors.black.withValues(alpha: 0.28));
+
+      switch (l.kind) {
+        case 0: // medkit
+          canvas.drawCircle(
+              o,
+              15,
+              _fill
+                ..color =
+                    const Color(0xFFFF4D5A).withValues(alpha: 0.22 * pulse));
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: o, width: 20, height: 20),
+                  const Radius.circular(4)),
+              _fill..color = const Color(0xFFFFFFFF));
+          canvas.drawRect(Rect.fromCenter(center: o, width: 12, height: 4),
+              _fill..color = const Color(0xFFE03A46));
+          canvas.drawRect(Rect.fromCenter(center: o, width: 4, height: 12),
+              _fill..color = const Color(0xFFE03A46));
+          continue;
+        case 3: // vest — plate carrier with shoulder straps
+          canvas.drawCircle(
+              o,
+              15,
+              _fill
+                ..color =
+                    const Color(0xFF4FA3FF).withValues(alpha: 0.2 * pulse));
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: o, width: 19, height: 22),
+                  const Radius.circular(5)),
+              _fill..color = const Color(0xFF2E4460));
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: o, width: 19, height: 22),
+                  const Radius.circular(5)),
+              _stroke
+                ..color = const Color(0xFF7FC4FF)
+                ..strokeWidth = 1.6);
+          canvas.drawRect(Rect.fromCenter(center: o, width: 7, height: 16),
+              _fill..color = const Color(0xFF4B6C93));
+          continue;
+        case 4: // helmet — a dome with a brow band
+          canvas.drawCircle(
+              o,
+              15,
+              _fill
+                ..color =
+                    const Color(0xFFFFC24B).withValues(alpha: 0.2 * pulse));
+          canvas.drawArc(
+              Rect.fromCenter(
+                  center: o.translate(0, 2), width: 22, height: 22),
+              math.pi,
+              math.pi,
+              true,
+              _fill..color = const Color(0xFF5A6250));
+          canvas.drawArc(
+              Rect.fromCenter(
+                  center: o.translate(0, 2), width: 22, height: 22),
+              math.pi,
+              math.pi,
+              false,
+              _stroke
+                ..color = const Color(0xFFC9D6A8)
+                ..strokeWidth = 1.8);
+          canvas.drawRect(
+              Rect.fromCenter(center: o.translate(0, 3), width: 22, height: 3),
+              _fill..color = const Color(0xFF39402F));
+          continue;
+        case 5: // shield-wall charge — a folded slab of energy
+          canvas.drawCircle(
+              o,
+              15,
+              _fill
+                ..color =
+                    const Color(0xFF7FE8FF).withValues(alpha: 0.2 * pulse));
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: o, width: 24, height: 15),
+                  const Radius.circular(3)),
+              _fill..color = const Color(0x667FE8FF));
+          canvas.drawRRect(
+              RRect.fromRectAndRadius(
+                  Rect.fromCenter(center: o, width: 24, height: 15),
+                  const Radius.circular(3)),
+              _stroke
+                ..color = const Color(0xFFBFF4FF)
+                ..strokeWidth = 1.6);
+          _stroke.strokeWidth = 1.2;
+          canvas.drawLine(o.translate(-4, -7), o.translate(-4, 7), _stroke);
+          canvas.drawLine(o.translate(4, -7), o.translate(4, 7), _stroke);
+          continue;
+        case 6: // grenade
+          canvas.drawCircle(
+              o,
+              13,
+              _fill
+                ..color =
+                    const Color(0xFF6ABF5A).withValues(alpha: 0.22 * pulse));
+          canvas.drawCircle(o, 8, _fill..color = const Color(0xFF3A5A32));
+          canvas.drawCircle(
+              o,
+              8,
+              _stroke
+                ..color = const Color(0xFF7FCF6A)
+                ..strokeWidth = 1.5);
+          canvas.drawRect(
+              Rect.fromCenter(center: o.translate(0, -8), width: 5, height: 4),
+              _fill..color = const Color(0xFF9AA6B2));
+          continue;
       }
-      if (l.kind == 3 || l.kind == 4 || l.kind == 5) {
-        final tint = l.kind == 3
-            ? const Color(0xFF7FC4FF)
-            : l.kind == 4
-                ? const Color(0xFFC9D6A8)
-                : const Color(0xFF7FE8FF);
-        canvas.drawCircle(o, 18, _fill..color = tint.withValues(alpha: 0.18));
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(
-                    center: o,
-                    width: l.kind == 5 ? 26 : 20,
-                    height: l.kind == 5 ? 16 : 22),
-                const Radius.circular(4)),
-            _fill..color = const Color(0xFF2A3140));
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromCenter(
-                    center: o,
-                    width: l.kind == 5 ? 26 : 20,
-                    height: l.kind == 5 ? 16 : 22),
-                const Radius.circular(4)),
-            _stroke..color = tint..strokeWidth = 2);
-        continue;
-      }
+
+      // weapon (kind 1) and airdrop (kind 2)
       final id = WeaponId.values[l.wi.clamp(0, WeaponId.values.length - 1)];
-      final col = kWeapons[id]!.color;
+      final wc = kWeapons[id]!.color;
       if (l.kind == 2) {
-        // airdrop: a lit pad + a stencilled crate, visible from across the map
-        canvas.drawCircle(o, 36, _fill..color = kAccent.withValues(alpha: 0.14));
-        canvas.drawCircle(o, 26,
-            _stroke..color = kAccent.withValues(alpha: 0.8)..strokeWidth = 2);
+        final beat = 0.5 + 0.5 * math.sin(time * 4);
+        canvas.drawCircle(
+            o, 34, _fill..color = kAccent.withValues(alpha: 0.10 + 0.10 * beat));
+        canvas.drawCircle(
+            o,
+            24 + 4 * beat,
+            _stroke
+              ..color = kAccent.withValues(alpha: 0.7)
+              ..strokeWidth = 2);
         canvas.drawRRect(
             RRect.fromRectAndRadius(
-                Rect.fromCenter(center: o, width: 36, height: 30),
+                Rect.fromCenter(center: o, width: 34, height: 28),
                 const Radius.circular(4)),
             _fill..color = const Color(0xFF2A2F1E));
         canvas.drawRRect(
             RRect.fromRectAndRadius(
-                Rect.fromCenter(center: o, width: 36, height: 30),
+                Rect.fromCenter(center: o, width: 34, height: 28),
                 const Radius.circular(4)),
-            _stroke..color = kAccent..strokeWidth = 2);
+            _stroke
+              ..color = kAccent
+              ..strokeWidth = 2);
+        canvas.drawRect(Rect.fromCenter(center: o, width: 34, height: 5),
+            _fill..color = kAccent.withValues(alpha: 0.85));
       } else {
-        canvas.drawCircle(o, 16, _fill..color = col.withValues(alpha: 0.18));
+        canvas.drawCircle(
+            o, 15, _fill..color = wc.withValues(alpha: 0.22 * pulse));
       }
-      drawGunIcon(canvas, o, 28, id, fill: _fill, stroke: _stroke);
+      drawGunIcon(canvas, o.translate(0, l.kind == 2 ? 1 : 0), 26, id,
+          fill: _fill, stroke: _stroke);
+      if (l.kind != 2) {
+        canvas.drawRect(
+            Rect.fromCenter(center: o.translate(0, 9), width: 22, height: 2),
+            _fill..color = wc.withValues(alpha: 0.75));
+      }
     }
   }
 
