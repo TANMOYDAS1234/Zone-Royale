@@ -10,6 +10,10 @@ import '../game/royale_game.dart';
 import '../net/net_arena.dart';
 import 'brand.dart';
 import 'capture.dart';
+// The offline match and the online arena draw the SAME controls, from here.
+import 'hud_controls.dart';
+import 'result_screen.dart';
+import 'theme.dart';
 
 /// Page padding that keeps menu content in a readable centred column instead
 /// of stretching one thin list across a 20:9 landscape screen.
@@ -145,15 +149,19 @@ class HudLayer extends StatelessWidget {
         // Controls editor). On desktop the skill button sits at a fixed spot and
         // grenade/reload live in the info row.
         if (floating) ...[
+          // The width/height passed here MUST match what the widget actually
+          // measures — hudPlace clamps against it to keep controls inside the
+          // safe area, and an under-reported height lets a panel hang off the
+          // bottom of the screen.
           ..._sticks(s, safe),
           _place(s, 'skill', _ticked(_skillButton), 64, 64, safe),
           _place(s, 'nade', _ticked(_grenadeButton), 60, 60, safe),
-          _place(s, 'swap', _ticked(_swapButton), 74, 66, safe),
+          _place(s, 'swap', _ticked(_swapButton), 80, 66, safe),
           _place(s, 'wall', _ticked(_wallButton), 60, 60, safe),
-          _place(s, 'reload', _ticked(_reloadButton), 130, 70, safe),
-          _place(s, 'fire', _ticked(_fireModeButton), 64, 64, safe),
+          _place(s, 'reload', _ticked(_reloadButton), 140, 84, safe),
+          _place(s, 'fire', _ticked(_fireModeButton), 64, 62, safe),
           _place(s, 'hp',
-              _ticked(() => SizedBox(width: 150, child: _hpBar())), 150, 44, safe),
+              _ticked(() => SizedBox(width: 158, child: _hpBar())), 158, 56, safe),
           _place(s, 'pick', _ticked(_pickupButton), 168, 52, safe),
         ] else ...[
           Positioned(
@@ -163,6 +171,25 @@ class HudLayer extends StatelessWidget {
           ),
           _place(s, 'pick', _ticked(_pickupButton), 168, 52, safe),
         ],
+        // kill feed — the same widget the online arena uses
+        Positioned(
+          left: safe.left + 14,
+          top: safe.top + 52,
+          child: IgnorePointer(
+            child: _ticked(() => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final k in game.killLog.reversed)
+                      HudKillFeedLine(
+                          killer: k.killer.toUpperCase(),
+                          victim: k.victim.toUpperCase(),
+                          mine: k.mine,
+                          alpha: (k.life / 1.2).clamp(0.0, 1.0)),
+                  ],
+                )),
+          ),
+        ),
         // killstreak shout — the thing people screenshot
         IgnorePointer(child: _ticked(() => _streakBanner(s))),
       ],
@@ -173,34 +200,15 @@ class HudLayer extends StatelessWidget {
   Widget _streakBanner(Size s) {
     final txt = game.banner;
     if (txt == null) return const SizedBox.shrink();
-    final a = game.bannerAlpha;
     return Positioned(
       top: s.height * (Profile.instance.hudLandscape ? 0.16 : 0.24),
       left: 0,
       right: 0,
-      child: Opacity(
-        opacity: a,
-        child: Column(
-          children: [
-            Text(txt,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: kAccent,
-                    fontSize: 30,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 3,
-                    shadows: const [
-                      Shadow(color: Colors.black, blurRadius: 10),
-                      Shadow(color: Color(0xFFFF7A1A), blurRadius: 22),
-                    ])),
-            const SizedBox(height: 2),
-            Text('${game.streakKills} KILLS  ·  KEEP GOING',
-                style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.7),
-                    fontSize: 11,
-                    letterSpacing: 2,
-                    fontWeight: FontWeight.w700)),
-          ],
+      child: Center(
+        child: HudStreakBanner(
+          title: txt,
+          kills: game.streakKills,
+          alpha: game.bannerAlpha,
         ),
       ),
     );
@@ -217,55 +225,23 @@ class HudLayer extends StatelessWidget {
   // bar sits down one edge and swallows touches, so controls are kept inside
   // the safe area rather than the raw screen rect.
   Widget _place(Size s, String key, Widget child, double w, double h,
-      [EdgeInsets safe = EdgeInsets.zero]) {
-    final p = Profile.instance;
-    final sc = p.hudScaleOf(key);
-    final op = p.hudOpacityOf(key);
-    final ww = w * sc, hh = h * sc;
-    final f = p.hudPosOf(key);
-    final maxL = (s.width - safe.right - ww).clamp(0.0, s.width);
-    final maxT = (s.height - safe.bottom - hh).clamp(0.0, s.height);
-    final left =
-        (f[0] * s.width - ww / 2).clamp(safe.left.clamp(0.0, maxL), maxL);
-    final top =
-        (f[1] * s.height - hh / 2).clamp(safe.top.clamp(0.0, maxT), maxT);
-    return Positioned(
-      left: left,
-      top: top,
-      child: Opacity(
-        opacity: op,
-        // Transform scales hit-testing too, so the touch target grows with it
-        child: Transform.scale(scale: sc, child: child),
-      ),
-    );
-  }
+          [EdgeInsets safe = EdgeInsets.zero]) =>
+      hudPlace(s, key, child, w, h, safe);
 
   Widget _skillButton() {
     final p = game.player;
     final hero = kHeroes[Profile.instance.hero.clamp(0, kHeroes.length - 1)];
     final ready = p.skillCd <= 0;
     final col = Color(hero.color);
-    return GestureDetector(
-      onTap: ready ? game.activateSkill : null,
-      child: Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withValues(alpha: 0.45),
-          border: Border.all(color: ready ? col : Colors.white24, width: 3),
-          boxShadow: ready
-              ? [BoxShadow(color: col.withValues(alpha: 0.5), blurRadius: 14)]
-              : null,
-        ),
-        child: Center(
-          child: ready
-              ? Icon(_skillIcon(hero.skill), color: col, size: 28)
-              : Text('${p.skillCd.ceil()}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w900, fontSize: 20)),
-        ),
-      ),
+    return HudActionButton(
+      glyph: ready
+          ? Icon(_skillIcon(hero.skill), color: col, size: 24)
+          : Text('${p.skillCd.ceil()}', style: ZR.display(22)),
+      label: 'READY',
+      color: col,
+      ready: ready,
+      charge: ready ? 1 : 1 - (p.skillCd / hero.cooldown).clamp(0.0, 1.0),
+      onTap: game.activateSkill,
     );
   }
 
@@ -286,87 +262,10 @@ class HudLayer extends StatelessWidget {
 
   Widget _hpBar() {
     final p = game.player;
-    final hpFrac = (p.hp / kMaxHp).clamp(0.0, 1.0);
-    final vest = (p.vest / kVestDurability).clamp(0.0, 1.0);
-    final helm = (p.helmet / kHelmetDurability).clamp(0.0, 1.0);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Text('${p.hp.ceil().clamp(0, 100)} HP',
-                style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                    shadows: [Shadow(color: Colors.black, blurRadius: 3)])),
-            const Spacer(),
-            // gear pips: lit while that piece still has durability
-            if (vest > 0)
-              const Padding(
-                padding: EdgeInsets.only(left: 4),
-                child: Icon(Icons.shield, size: 12, color: Color(0xFF7FC4FF)),
-              ),
-            if (helm > 0)
-              const Padding(
-                padding: EdgeInsets.only(left: 4),
-                child: Icon(Icons.sports_motorsports,
-                    size: 12, color: Color(0xFFC9D6A8)),
-              ),
-          ],
-        ),
-        const SizedBox(height: 3),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(
-            value: hpFrac,
-            minHeight: 12,
-            backgroundColor: Colors.black45,
-            valueColor: AlwaysStoppedAnimation(
-              Color.lerp(
-                  const Color(0xFFFF4D4D), const Color(0xFF52E06A), hpFrac)!,
-            ),
-          ),
-        ),
-        // A thin armour strip under the health bar, BGMI-style: you can see at
-        // a glance how much protection you have left.
-        if (vest > 0 || helm > 0) ...[
-          const SizedBox(height: 3),
-          Row(
-            children: [
-              if (vest > 0)
-                Expanded(
-                  flex: 3,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: vest,
-                      minHeight: 5,
-                      backgroundColor: Colors.black45,
-                      valueColor:
-                          const AlwaysStoppedAnimation(Color(0xFF7FC4FF)),
-                    ),
-                  ),
-                ),
-              if (vest > 0 && helm > 0) const SizedBox(width: 4),
-              if (helm > 0)
-                Expanded(
-                  flex: 2,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: helm,
-                      minHeight: 5,
-                      backgroundColor: Colors.black45,
-                      valueColor:
-                          const AlwaysStoppedAnimation(Color(0xFFC9D6A8)),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ],
+    return HudHealth(
+      hp: p.hp.ceil().clamp(0, 100),
+      vestFrac: (p.vest / kVestDurability).clamp(0.0, 1.0),
+      helmetFrac: (p.helmet / kHelmetDurability).clamp(0.0, 1.0),
     );
   }
 
@@ -375,36 +274,24 @@ class HudLayer extends StatelessWidget {
   Widget _wallButton() {
     final p = game.player;
     final ready = p.walls > 0 && p.wallCd <= 0;
-    const col = Color(0xFF7FE8FF);
-    return GestureDetector(
-      onTap: ready ? game.deployWall : null,
-      child: Container(
-        width: 60,
-        height: 60,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: Colors.black.withValues(alpha: 0.45),
-          border: Border.all(color: ready ? col : Colors.white24, width: 3),
-          boxShadow: ready
-              ? [BoxShadow(color: col.withValues(alpha: 0.45), blurRadius: 12)]
-              : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 24,
-              height: 16,
-              child: CustomPaint(painter: ShieldWallGlyph(lit: ready)),
-            ),
-            Text('${p.walls}',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                    color: ready ? col : Colors.white38)),
-          ],
-        ),
+    return HudActionButton(
+      glyph: SizedBox(
+        width: 22,
+        height: 15,
+        child: CustomPaint(painter: ShieldWallGlyph(lit: ready)),
       ),
+      label: 'WALL',
+      color: ZR.tertiary,
+      ready: ready,
+      size: 60,
+      count: '${p.walls}',
+      busyLabel: p.walls <= 0 ? 'EMPTY' : 'WAIT',
+      charge: p.walls <= 0
+          ? 0
+          : (p.wallCd <= 0
+              ? 1
+              : 1 - (p.wallCd / kShieldWallCooldown).clamp(0.0, 1.0)),
+      onTap: game.deployWall,
     );
   }
 
@@ -435,9 +322,11 @@ class HudLayer extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                _pill('${game.aliveCount} ALIVE', kAccent),
+                HudPill('${game.aliveCount}',
+                    color: ZR.primary, icon: Icons.person),
                 const SizedBox(width: 8),
-                _pill('${p.kills} KILLS', Colors.white24),
+                HudPill('${p.kills}',
+                    color: ZR.danger, icon: Icons.gps_fixed),
                 const Spacer(),
                 // Landscape screens are short — a full-size minimap would eat
                 // a third of the height, so it shrinks when held sideways.
@@ -489,125 +378,29 @@ class HudLayer extends StatelessWidget {
 
   Widget _zoneBanner() {
     final closing = game.zoneShrinking;
-    final txt = closing
-        ? 'ZONE CLOSING — GET INSIDE'
-        : (game.zoneTimer > 900
-            ? 'FINAL ZONE'
-            : 'Zone shrinks in ${game.zoneTimer.ceil()}s');
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      decoration: BoxDecoration(
-        color: (closing ? kGasEdge : kSafeEdge).withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: (closing ? kGasEdge : kSafeEdge).withValues(alpha: 0.7)),
-      ),
-      child: Text(txt,
-          style: TextStyle(
-              color: closing ? kGasEdge : kSafeEdge,
-              fontWeight: FontWeight.w700,
-              fontSize: 12)),
+    final t = game.zoneTimer;
+    return HudZoneStrip(
+      closing: closing,
+      time: t > 900 ? 'FINAL' : '${t.ceil()}s',
+      // the bar drains through the phase either way, so the strip always
+      // reads as "something is about to happen"
+      progress: 1 - (t / (closing ? 30 : 60)).clamp(0.0, 1.0),
     );
   }
 
-  Widget _pill(String txt, Color c) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: c.withValues(alpha: 0.7)),
-        ),
-        child: Text(txt,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+  Widget _fireModeButton() => HudFireMode(
+        supportsAuto: game.player.weapon.auto,
+        auto: game.playerAuto,
+        onTap: game.toggleFireMode,
       );
-
-  Widget _fireModeButton() {
-    final supportsAuto = game.player.weapon.auto;
-    final auto = supportsAuto && game.playerAuto;
-    return GestureDetector(
-      onTap: supportsAuto ? game.toggleFireMode : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: auto ? kAccent : Colors.white24),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(auto ? Icons.flash_on : Icons.filter_center_focus,
-                size: 16, color: auto ? kAccent : Colors.white70),
-            const SizedBox(height: 2),
-            Text(
-              !supportsAuto ? 'SINGLE' : (game.playerAuto ? 'AUTO' : 'SINGLE'),
-              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   /// WEAPON SWITCH — the fix for "the game swapped my gun for me". Shows the
   /// gun waiting in your other slot; tap to bring it up. Nothing else in the
   /// game can change what you're holding.
-  Widget _swapButton() {
-    final p = game.player;
-    final other = p.otherWeapon;
-    final has = other != null;
-    final col = has ? kWeapons[other]!.color : Colors.white24;
-    return GestureDetector(
-      onTap: has ? game.swapWeapon : null,
-      child: Container(
-        width: 74,
-        height: 66,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: has ? col.withValues(alpha: 0.8) : Colors.white24),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.swap_horiz_rounded, size: 12, color: Colors.white54),
-                SizedBox(width: 3),
-                Text('SWITCH',
-                    style: TextStyle(
-                        fontSize: 8,
-                        letterSpacing: 1,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white54)),
-              ],
-            ),
-            const SizedBox(height: 2),
-            SizedBox(
-              width: 60,
-              height: 20,
-              child: has
-                  ? CustomPaint(painter: _GunIconPainter(other))
-                  : const Center(
-                      child: Text('EMPTY',
-                          style: TextStyle(
-                              fontSize: 9,
-                              color: Colors.white30,
-                              fontWeight: FontWeight.w800))),
-            ),
-            Text(has ? kWeapons[other]!.name.toUpperCase() : '—',
-                maxLines: 1,
-                overflow: TextOverflow.clip,
-                style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                    color: has ? col : Colors.white24)),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _swapButton() => HudSwapPanel(
+        other: game.player.otherWeapon,
+        onTap: game.swapWeapon,
+      );
 
   /// Appears only while you're standing on a gun you'd have to trade for.
   /// No tap = no swap, so loot can never cost you a fight.
@@ -616,139 +409,41 @@ class HudLayer extends StatelessWidget {
     if (l == null || l.weapon == null || !game.player.alive) {
       return const SizedBox.shrink();
     }
-    final w = kWeapons[l.weapon]!;
-    return GestureDetector(
+    return HudPickupPrompt(
+      offered: l.weapon!,
+      held: game.player.weaponId,
       onTap: game.takePickup,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.62),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: w.color, width: 2),
-          boxShadow: [
-            BoxShadow(color: w.color.withValues(alpha: 0.35), blurRadius: 14)
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-                width: 42,
-                height: 18,
-                child: CustomPaint(painter: _GunIconPainter(l.weapon!))),
-            const SizedBox(width: 8),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('PICK UP  ${w.name.toUpperCase()}',
-                    style: TextStyle(
-                        color: w.color,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5)),
-                Text('replaces ${game.player.weapon.name.toUpperCase()}',
-                    style: const TextStyle(
-                        color: Colors.white38,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700)),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 
   Widget _grenadeButton() {
     final n = game.player.grenades;
-    final has = n > 0;
-    return GestureDetector(
-      onTap: has ? game.throwGrenade : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: has ? const Color(0xFF6ABF5A) : Colors.white24),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Opacity(
-                opacity: has ? 1 : 0.4,
-                child: const Text('💣', style: TextStyle(fontSize: 16))),
-            Text('$n',
-                style:
-                    const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-          ],
-        ),
-      ),
+    return HudActionButton(
+      glyph: const Text('💣', style: TextStyle(fontSize: 17)),
+      label: 'NADE',
+      color: const Color(0xFF6ABF5A),
+      ready: n > 0 && game.player.throwCd <= 0,
+      size: 60,
+      count: '$n',
+      busyLabel: n <= 0 ? 'EMPTY' : 'WAIT',
+      charge: n <= 0
+          ? 0
+          : (game.player.throwCd <= 0
+              ? 1
+              : 1 - (game.player.throwCd / kThrowCooldown).clamp(0.0, 1.0)),
+      onTap: game.throwGrenade,
     );
   }
 
   // Weapon panel — tap to reload. Shows the gun, its ammo and reload progress.
   Widget _reloadButton() {
     final p = game.player;
-    final ammo = p.reloading ? 'RELOADING' : '${p.ammo} / ${p.weapon.mag}';
-    final lowAmmo = !p.reloading && p.ammo <= (p.weapon.mag * 0.3).ceil();
-    return GestureDetector(
+    return HudWeaponPanel(
+      weapon: p.weaponId,
+      ammo: p.ammo,
+      reloading: p.reloading,
+      reloadFrac: 1 - (p.reloadT / p.weapon.reloadTime).clamp(0.0, 1.0),
       onTap: game.requestReload,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: lowAmmo
-                  ? const Color(0xFFFF5A5F)
-                  : p.weapon.color.withValues(alpha: 0.6)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-                width: 92,
-                height: 22,
-                child: CustomPaint(painter: _GunIconPainter(p.weaponId))),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.autorenew, size: 12, color: Colors.white38),
-                const SizedBox(width: 4),
-                Text(p.weapon.name.toUpperCase(),
-                    style: TextStyle(
-                        color: p.weapon.color,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13)),
-              ],
-            ),
-            Text(ammo,
-                style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                    color: lowAmmo ? const Color(0xFFFF5A5F) : Colors.white)),
-            if (p.reloading) ...[
-              const SizedBox(height: 3),
-              SizedBox(
-                width: 62,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: 1 -
-                        (p.reloadT / p.weapon.reloadTime).clamp(0.0, 1.0),
-                    minHeight: 4,
-                    backgroundColor: Colors.black45,
-                    valueColor: AlwaysStoppedAnimation(p.weapon.color),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 
@@ -756,22 +451,22 @@ class HudLayer extends StatelessWidget {
     final p = Profile.instance;
     // base size — _place() applies each control's own scale + opacity
     const size = 132.0;
-    final move = _stickWidget(
+    final move = HudStick(
       label: 'MOVE',
-      accent: kSafeEdge,
+      accent: ZR.secondary,
+      icon: Icons.open_with,
       size: size,
-      opacity: 1.0,
       onChange: (v) {
         game.enableTouch(true);
         game.setMove(v.dx, v.dy);
       },
       onRelease: () => game.setMove(0, 0),
     );
-    final aim = _stickWidget(
+    final aim = HudStick(
       label: 'AIM · FIRE',
-      accent: kAccent2,
+      accent: ZR.danger,
+      icon: Icons.gps_fixed,
       size: size,
-      opacity: 1.0,
       onChange: (v) {
         game.enableTouch(true);
         game.setAimStick(v.dx, v.dy);
@@ -787,52 +482,10 @@ class HudLayer extends StatelessWidget {
       _place(s, aimKey, aim, size, h, safe),
     ];
   }
-
-  Widget _stickWidget({
-    required String label,
-    required Color accent,
-    required double size,
-    required double opacity,
-    required void Function(Offset) onChange,
-    required VoidCallback onRelease,
-  }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(label,
-            style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
-                color: accent.withValues(alpha: 0.9))),
-        const SizedBox(height: 6),
-        Joystick(
-          onChange: onChange,
-          onRelease: onRelease,
-          size: size,
-          accent: accent,
-          opacity: opacity,
-        ),
-      ],
-    );
-  }
 }
 
-/// Paints a weapon exactly as it's drawn in the world, fitted to its box —
-/// used by the weapon panel, the slot switcher, the pickup prompt and the shop.
-class _GunIconPainter extends CustomPainter {
-  final WeaponId weapon;
-  const _GunIconPainter(this.weapon);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    drawGunIcon(canvas, Offset(size.width / 2, size.height / 2),
-        size.width * 0.96, weapon);
-  }
-
-  @override
-  bool shouldRepaint(covariant _GunIconPainter old) => old.weapon != weapon;
-}
+// (The gun-icon painter used to live here. Both modes now share HudGunPainter
+// from lib/ui/hud_controls.dart, so there is exactly one of them.)
 
 // ============================================================
 //  Minimap
@@ -848,11 +501,18 @@ class _MiniMap extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white24),
+        color: Colors.black.withValues(alpha: 0.55),
+        shape: BoxShape.circle,
+        border:
+            Border.all(color: ZR.primary.withValues(alpha: 0.55), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+              color: ZR.primary.withValues(alpha: 0.18),
+              blurRadius: 14,
+              spreadRadius: -4)
+        ],
       ),
-      child: CustomPaint(painter: _MiniMapPainter(game)),
+      child: ClipOval(child: CustomPaint(painter: _MiniMapPainter(game))),
     );
   }
 }
@@ -884,15 +544,43 @@ class _ControlsEditorState extends State<ControlsEditor> {
     'hp': 'HP BAR',
   };
 
+  /// Short names for the picker strip — you select a control from the bar
+  /// itself, so a token parked under the bar (or under your thumb) is still
+  /// reachable without moving it first.
+  static const _short = {
+    'move': 'MOVE',
+    'aim': 'AIM',
+    'skill': 'SKILL',
+    'nade': 'NADE',
+    'swap': 'SWAP',
+    'wall': 'WALL',
+    'pick': 'PICK',
+    'reload': 'RELOAD',
+    'fire': 'MODE',
+    'hp': 'HP',
+  };
+
+  static const _tint = {
+    'move': kSafeEdge,
+    'aim': kAccent2,
+    'skill': Color(0xFFB06BFF),
+    'nade': Color(0xFF6ABF5A),
+    'swap': kSafeEdge,
+    'wall': Color(0xFF7FE8FF),
+    'pick': kAccent2,
+    'reload': kAccent,
+    'fire': kAccent,
+    'hp': Color(0xFF52E06A),
+  };
+
   late Map<String, double> _scale;
   late Map<String, double> _opacity;
   String _sel = 'move'; // control currently being tuned
   bool? _loadedLandscape; // which orientation's layout is loaded
-  /// The tuning panel and the save bar cover the top and bottom of the screen
-  /// — exactly where controls live. They fade out while you drag, and can be
-  /// hidden entirely, so every inch of the layout is reachable.
+  /// The header and tuning row sit in one slim bar at the very top — the only
+  /// strip of screen no control needs — and fade while you drag, so the whole
+  /// layout stays reachable without ever hiding SAVE or the sliders.
   bool _dragging = false;
-  bool _panels = true;
 
   @override
   void initState() {
@@ -967,97 +655,26 @@ class _ControlsEditorState extends State<ControlsEditor> {
               _token(s, 'reload', 130, 66, accent: kAccent, box: true),
               _token(s, 'fire', 64, 64, accent: kAccent, box: true),
               _token(s, 'hp', 150, 46, accent: const Color(0xFF52E06A), box: true),
-              // header + tuning panel live at the TOP, where the screen is
-              // empty — the controls being tuned sit near the bottom.
+              // One slim bar pinned to the very top — the strip of screen no
+              // control needs. Everything (close, reset, save, size, opacity)
+              // stays visible at all times; it only fades while you drag so
+              // you can park a control right under it.
               Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
                 child: IgnorePointer(
-                  ignoring: _dragging || !_panels,
+                  ignoring: _dragging,
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 140),
-                    opacity: !_panels ? 0.0 : (_dragging ? 0.18 : 1.0),
+                    opacity: _dragging ? 0.15 : 1.0,
                     child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          children: [
-                            IconButton(
-                              onPressed: () => Navigator.of(context).maybePop(),
-                              icon:
-                                  const Icon(Icons.close, color: Colors.white),
-                            ),
-                            const SizedBox(width: 2),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Text('DRAG TO PLACE YOUR CONTROLS',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w800,
-                                          letterSpacing: 1,
-                                          fontSize: 14)),
-                                  const Text(
-                                      'Drag any control · pinch-free sizing below',
-                                      style: TextStyle(
-                                          color: kAccent,
-                                          fontWeight: FontWeight.w700,
-                                          fontSize: 10,
-                                          letterSpacing: 0.5)),
-                                ],
-                              ),
-                            ),
-                            TextButton.icon(
-                              onPressed: _reset,
-                              icon: const Icon(Icons.restart_alt,
-                                  size: 18, color: Colors.white70),
-                              label: const Text('RESET',
-                                  style: TextStyle(color: Colors.white70)),
-                            ),
-                            // hide the panels to reach controls underneath
-                            IconButton(
-                              onPressed: () =>
-                                  setState(() => _panels = !_panels),
-                              tooltip: 'Show / hide panels',
-                              icon: Icon(
-                                  _panels
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                  size: 20,
-                                  color: _panels ? Colors.white70 : kAccent),
-                            ),
-                            const SizedBox(width: 4),
-                            GestureDetector(
-                              onTap: _save,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 9),
-                                decoration: BoxDecoration(
-                                  color: kSafeEdge,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: const Text('SAVE',
-                                    style: TextStyle(
-                                        color: Color(0xFF10131A),
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 1)),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        _tunePanel(),
-                      ],
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+                        child: _tuneBar(),
+                      ),
                     ),
-                  ),
-                ),
                   ),
                 ),
               ),
@@ -1125,71 +742,160 @@ class _ControlsEditorState extends State<ControlsEditor> {
     );
   }
 
-  /// SIZE + OPACITY sliders for whichever control is currently selected.
-  Widget _tunePanel() {
-    final label = _labels[_sel] ?? _sel;
-    Widget row(String name, double val, double min, double max,
+  /// Everything the editor needs in one 70dp bar: exit, SIZE and OPACITY for
+  /// the selected control, RESET, SAVE, and a strip that selects any control
+  /// directly. The old stacked panel was twice this tall and swallowed the
+  /// top third of the layout — where the health bar and pickup prompt live.
+  Widget _tuneBar() {
+    Widget slider(IconData icon, double val, double min, double max,
         ValueChanged<double> onCh) {
-      return Row(
-        children: [
-          SizedBox(
-              width: 62,
-              child: Text(name,
-                  style: const TextStyle(fontSize: 11, color: Colors.white60))),
-          Expanded(
-            child: SliderTheme(
-              data: SliderTheme.of(context)
-                  .copyWith(trackHeight: 3, activeTrackColor: kAccent),
-              child: Slider(
-                  value: val.clamp(min, max),
-                  min: min,
-                  max: max,
-                  activeColor: kAccent,
-                  onChanged: onCh),
+      return Expanded(
+        child: Row(
+          children: [
+            Icon(icon, size: 13, color: Colors.white38),
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 2.5,
+                  activeTrackColor: kAccent,
+                  inactiveTrackColor: Colors.white12,
+                  thumbColor: kAccent,
+                  overlayShape: SliderComponentShape.noOverlay,
+                  thumbShape:
+                      const RoundSliderThumbShape(enabledThumbRadius: 7),
+                ),
+                child: Slider(
+                    value: val.clamp(min, max),
+                    min: min,
+                    max: max,
+                    onChanged: onCh),
+              ),
             ),
+            SizedBox(
+              width: 34,
+              child: Text('${(val * 100).round()}%',
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                      fontSize: 10,
+                      color: kAccent,
+                      fontWeight: FontWeight.w800)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget tap(String text, IconData icon, Color fg, Color bg,
+        VoidCallback onTap) {
+      return GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          height: 30,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: bg, borderRadius: BorderRadius.circular(8)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, size: 14, color: fg),
+            const SizedBox(width: 5),
+            Text(text,
+                style: TextStyle(
+                    color: fg,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8)),
+          ]),
+        ),
+      );
+    }
+
+    // one chip per control — tap to tune it without hunting for the token
+    Widget chip(String key) {
+      final on = _sel == key;
+      final col = _tint[key] ?? kAccent;
+      return Padding(
+        padding: const EdgeInsets.only(right: 5),
+        child: GestureDetector(
+          onTap: () => setState(() => _sel = key),
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 130),
+            height: 24,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: col.withValues(alpha: on ? 0.30 : 0.08),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(
+                  color: on ? col : col.withValues(alpha: 0.35),
+                  width: on ? 1.6 : 1),
+            ),
+            child: Text(_short[key] ?? key,
+                style: TextStyle(
+                    color: on ? Colors.white : col.withValues(alpha: 0.85),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6)),
           ),
-          SizedBox(
-            width: 44,
-            child: Text('${(val * 100).round()}%',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontSize: 11, color: kAccent, fontWeight: FontWeight.w800)),
-          ),
-        ],
+        ),
       );
     }
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.75),
-        borderRadius: BorderRadius.circular(14),
+        color: Colors.black.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.white12),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            children: [
-              const Icon(Icons.tune, size: 15, color: kAccent),
-              const SizedBox(width: 6),
-              Text('TUNING  ·  $label',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1)),
-              const Spacer(),
-              const Text('tap a control to select',
-                  style: TextStyle(color: Colors.white30, fontSize: 10)),
-            ],
+          SizedBox(
+            height: 32,
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => Navigator.of(context).maybePop(),
+                  behavior: HitTestBehavior.opaque,
+                  child: const SizedBox(
+                      width: 34,
+                      height: 32,
+                      child: Icon(Icons.close, color: Colors.white70, size: 19)),
+                ),
+                // each control has its own floor (48dp touch target) and ceiling
+                slider(Icons.photo_size_select_small, _scale[_sel]!,
+                    Profile.scaleRangeOf(_sel)[0], Profile.scaleRangeOf(_sel)[1],
+                    (v) => setState(() => _scale[_sel] = v)),
+                slider(Icons.opacity, _opacity[_sel]!, Profile.kMinOpacity,
+                    Profile.kMaxOpacity,
+                    (v) => setState(() => _opacity[_sel] = v)),
+                const SizedBox(width: 6),
+                tap('RESET', Icons.restart_alt, Colors.white70,
+                    Colors.white.withValues(alpha: 0.07), _reset),
+                const SizedBox(width: 6),
+                tap('SAVE', Icons.check, const Color(0xFF10131A), kSafeEdge,
+                    _save),
+              ],
+            ),
           ),
-          // each control has its own floor (48dp touch target) and ceiling
-          row('SIZE', _scale[_sel]!, Profile.scaleRangeOf(_sel)[0],
-              Profile.scaleRangeOf(_sel)[1],
-              (v) => setState(() => _scale[_sel] = v)),
-          row('OPACITY', _opacity[_sel]!, Profile.kMinOpacity,
-              Profile.kMaxOpacity, (v) => setState(() => _opacity[_sel] = v)),
+          SizedBox(
+            height: 26,
+            child: Row(
+              children: [
+                const SizedBox(width: 6),
+                const Icon(Icons.tune, size: 13, color: Colors.white38),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [for (final k in _labels.keys) chip(k)],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1225,6 +931,8 @@ class _MiniMapPainter extends CustomPainter {
     Offset m(double x, double y) => Offset(x * s, y * s);
 
     // safe circle
+    canvas.drawCircle(m(game.zoneCenter.x, game.zoneCenter.y),
+        game.zoneRadius * s, Paint()..color = ZR.secondary.withValues(alpha: 0.06));
     canvas.drawCircle(
         m(game.zoneCenter.x, game.zoneCenter.y),
         game.zoneRadius * s,
@@ -1232,6 +940,17 @@ class _MiniMapPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5
           ..color = kSafeEdge);
+    // hard cover, so the map reads as a place rather than dots on a disc —
+    // the online minimap draws exactly the same thing
+    final cover = Paint()..color = Colors.white.withValues(alpha: 0.16);
+    final shield = Paint()..color = ZR.tertiary.withValues(alpha: 0.7);
+    for (final o in game.obstacles) {
+      if (!o.blocks) continue;
+      canvas.drawRect(
+          Rect.fromLTWH(o.x * s, o.y * s, math.max(1, o.w * s),
+              math.max(1, o.h * s)),
+          o.isShield ? shield : cover);
+    }
     final p = game.player;
     // nearby enemies within detection range as red blips (radar)
     const detect = 780.0;
@@ -1996,275 +1715,73 @@ class EndOverlay extends StatelessWidget {
         : '🔫 Zone Royale — #${game.resultPlacement} / $total, $kills kills$streak. My turn to win next.';
   }
 
-  Widget _rewardsCard(RoyaleGame game) {
-    final r = game.lastRewards;
-    if (r == null) return const SizedBox.shrink();
-    final p = Profile.instance;
-    return Container(
-      width: 300,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.05),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        children: [
-          if (r.levels > 0) ...[
-            Text('LEVEL UP!  ×${r.levels}',
-                style: TextStyle(
-                    color: kAccent,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    letterSpacing: 1)),
-            const SizedBox(height: 8),
-          ],
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              Text('+${r.xp} XP',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, color: Color(0xFF8FE07A))),
-              Text('+${r.coins} 🪙',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, color: Color(0xFFFFD36B))),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Text('Lv ${p.level}',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w900, color: p.rankColor)),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(5),
-                  child: LinearProgressIndicator(
-                    value: p.xpFraction,
-                    minHeight: 8,
-                    backgroundColor: Colors.black38,
-                    valueColor: AlwaysStoppedAnimation(p.rankColor),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(p.rank,
-                  style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: p.rankColor)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final won = game.resultWon;
-    final canSpectate = !won && game.aliveCount > 1;
-    final accent = won ? kAccent : kAccent2;
-    return Container(
-      color: const Color(0xFF07090E),
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-                14, 10 + MediaQuery.of(context).padding.top, 14, 4),
-            child: Row(
-              children: [
-                GestureDetector(
-                    onTap: game.goHome,
-                    child: const Icon(Icons.arrow_back, color: Colors.white)),
-                const SizedBox(width: 10),
-                const Text('MATCH SUMMARY',
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1)),
-              ],
-            ),
-          ),
+    final r = game.lastRewards;
+    final p = Profile.instance;
+    return MatchResultView(
+      cardKey: _shotKey,
+      onBack: game.goHome,
+      result: MatchResult(
+        won: won,
+        mode: 'SOLO MATCH',
+        placement: won ? '#1' : '#${game.resultPlacement}',
+        headline: won ? 'WINNER WINNER' : 'ELIMINATED',
+        subtitle: won ? 'CHICKEN DINNER' : 'ZONE SECTOR CLEARED',
+        // top of the lobby on kills, with at least one, is worth calling out
+        mvp: game.player.kills > 0 &&
+            game.chars.every((c) => c == game.player || c.kills < game.player.kills),
+        stats: [
+          ('KILLS', '${game.player.kills}'),
+          ('BEST STREAK', game.bestStreak > 1 ? 'x${game.bestStreak}' : '—'),
+          ('PLAYERS', '${game.chars.length}'),
+          ('RANK', p.rank.toUpperCase()),
+        ],
+        xp: r?.xp ?? 0,
+        coins: r?.coins ?? 0,
+        levels: r?.levels ?? 0,
+      ),
+      actions: [
+        Expanded(
+          flex: 2,
+          child: ZrButton(
+              label: 'PLAY AGAIN',
+              icon: Icons.replay,
+              height: 46,
+              fontSize: 20,
+              onTap: game.startMatch),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ZrGhostButton(
+              label: 'SHARE',
+              icon: Icons.ios_share,
+              height: 46,
+              color: ZR.secondary,
+              onTap: () => _shareShot(context)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ZrGhostButton(
+              label: 'HOME',
+              icon: Icons.home_rounded,
+              height: 46,
+              color: Colors.white54,
+              onTap: game.goHome),
+        ),
+        if (!won && game.aliveCount > 1) ...[
+          const SizedBox(width: 10),
           Expanded(
-            child: SingleChildScrollView(
-              padding: menuPad(context, top: 6),
-              child: Column(
-                children: [
-                  RepaintBoundary(
-                    key: _shotKey,
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(20, 22, 20, 22),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            accent.withValues(alpha: 0.16),
-                            const Color(0xFF05070C)
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: accent.withValues(alpha: 0.4)),
-                      ),
-                      child: Column(
-                        children: [
-                          Text('ZONE ROYALE  //  ${won ? 'VICTORY' : 'DEFEAT'}',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  letterSpacing: 3,
-                                  fontWeight: FontWeight.w900,
-                                  color: accent)),
-                          const SizedBox(height: 10),
-                          Text(won ? '#1' : '#${game.resultPlacement}',
-                              style: TextStyle(
-                                  fontSize: 76,
-                                  fontWeight: FontWeight.w900,
-                                  color: accent,
-                                  height: 1)),
-                          Text(won ? 'WINNER WINNER' : 'ELIMINATED',
-                              style: TextStyle(
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 2,
-                                  color: won ? Colors.white : accent)),
-                          Text(won ? 'CHICKEN DINNER' : 'ZONE SECTOR CLEARED',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  letterSpacing: 5,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white.withValues(alpha: 0.5))),
-                          const SizedBox(height: 16),
-                          // the real 2D operator (honest — matches gameplay)
-                          Container(
-                            width: 130,
-                            height: 130,
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.3),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                  color: accent.withValues(alpha: 0.4)),
-                            ),
-                            child: CustomPaint(
-                              painter: OperatorPreviewPainter(
-                                outfit: Profile.instance.outfitColor,
-                                skin: Profile.instance.skinColor,
-                                accessory: Profile.instance.accessory,
-                                weapon: Profile.instance.startWeapon,
-                                hero: Profile.instance.hero,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 18),
-                          _statsCard(),
-                          const SizedBox(height: 12),
-                          _rewardsCard(game),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _DropButton(label: 'PLAY AGAIN', onTap: game.startMatch),
-                  if (canSpectate)
-                    TextButton(
-                      onPressed: game.spectate,
-                      child: const Text('SPECTATE',
-                          style: TextStyle(
-                              color: Colors.white38, letterSpacing: 1)),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          // bottom action bar (HOME / SHARE)
-          Container(
-            decoration: const BoxDecoration(color: Color(0xFF0A0D13)),
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                        child: _endAction(
-                            Icons.home_rounded, 'HOME', game.goHome)),
-                    const SizedBox(width: 12),
-                    Expanded(
-                        child: _endAction(Icons.ios_share, 'SHARE',
-                            () => _shareShot(context))),
-                  ],
-                ),
-              ),
-            ),
+            child: ZrGhostButton(
+                label: 'SPECTATE',
+                icon: Icons.visibility,
+                height: 46,
+                color: ZR.primary,
+                onTap: game.spectate),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _endAction(IconData icon, String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 13),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white12),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 18, color: Colors.white70),
-            const SizedBox(width: 8),
-            Text(label,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1,
-                    color: Colors.white)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _statsCard() {
-    Widget stat(String k, String v) => Column(
-          children: [
-            Text(v,
-                style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white)),
-            const SizedBox(height: 2),
-            Text(k,
-                style: TextStyle(
-                    fontSize: 10,
-                    letterSpacing: 1,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white.withValues(alpha: 0.5))),
-          ],
-        );
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          stat('KILLS', '${game.player.kills}'),
-          // best multi-kill of the match — the number people brag about
-          stat('BEST STREAK',
-              game.bestStreak > 1 ? '×${game.bestStreak}' : '—'),
-          stat('PLAYERS', '${game.chars.length}'),
-          stat('RANK', Profile.instance.rank.toUpperCase()),
-        ],
-      ),
+      ],
     );
   }
 }

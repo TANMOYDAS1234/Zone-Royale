@@ -220,8 +220,11 @@ class _ShopScreenState extends State<ShopScreen> {
     );
   }
 
-  Widget _gunTile(WeaponId w) => CustomPaint(
-        painter: _GunTilePainter(w),
+  // SizedBox.expand matters: a bare CustomPaint with no child takes
+  // constraints.smallest, and a Column's Expanded only tightens the main axis
+  // — so the tile collapsed to zero width and the gun never appeared.
+  Widget _gunTile(WeaponId w) => SizedBox.expand(
+        child: CustomPaint(painter: _GunTilePainter(w)),
       );
 
   // ---------------------------------------------------------------- build

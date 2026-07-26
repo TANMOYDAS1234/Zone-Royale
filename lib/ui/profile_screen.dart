@@ -4,6 +4,7 @@ import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/royale_game.dart';
 import 'game_ui.dart' show ControlsEditor;
+import 'quality_preview.dart';
 import 'shell.dart';
 import 'theme.dart';
 
@@ -222,6 +223,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
               (i) => setState(() => p.fireAuto = i == 0)),
         ]),
         const SizedBox(height: 10),
+        // Solo difficulty lives here as well as on the home console — this is
+        // where players look for it. Both write the same setting, and the bot
+        // numbers below move as you switch so you can see it take effect.
+        // (Custom rooms set their own difficulty in the room rules.)
+        _card('SOLO DIFFICULTY', Icons.speed, [
+          _segment([for (final d in kDifficulties) d.name], p.difficulty, (i) {
+            setState(() => p.difficulty = i);
+            p.save();
+          }),
+          const SizedBox(height: 4),
+          Text(p.diff.tagline.toUpperCase(),
+              style: ZR.mono(8, color: Colors.white30)),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 5,
+            children: [
+              for (final (k, v) in p.diff.spec)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(5),
+                    border:
+                        Border.all(color: ZR.primary.withValues(alpha: 0.35)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text('$k ',
+                        style:
+                            ZR.mono(7.5, color: Colors.white38, spacing: 0.4)),
+                    Text(v, style: ZR.display(13, color: ZR.primary)),
+                  ]),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+              'Applies to solo matches. Your level also raises the bot mix, so '
+              'the climb stays challenging without becoming unwinnable.',
+              style: ZR.mono(8, color: Colors.white24, spacing: 0.3)),
+        ]),
+        const SizedBox(height: 10),
         _card('SCREEN & FEEL', Icons.tune, [
           Text('GRAPHICS FIDELITY', style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
@@ -232,6 +276,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 4),
           Text(p.gfx.tagline.toUpperCase(),
               style: ZR.mono(8, color: Colors.white30)),
+          const SizedBox(height: 8),
+          // A live sample of the setting: the same muzzle flash, tracers,
+          // shadows and dust the match renders, so the choice is something you
+          // can see rather than three words.
+          QualityPreview(quality: p.quality),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 5,
+            children: [
+              for (final (k, v) in p.gfx.spec)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(
+                        color: v == 'OFF'
+                            ? Colors.white12
+                            : ZR.secondary.withValues(alpha: 0.4)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text('$k ',
+                        style: ZR.mono(7.5, color: Colors.white38, spacing: 0.4)),
+                    Text(v,
+                        style: ZR.display(13,
+                            color:
+                                v == 'OFF' ? Colors.white30 : ZR.secondary)),
+                  ]),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           Row(
             children: [

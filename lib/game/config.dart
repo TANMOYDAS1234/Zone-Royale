@@ -40,6 +40,15 @@ class Difficulty {
   final double vision; // multiplier on how far bots spot you
   const Difficulty(this.id, this.name, this.tagline, this.skill, this.damage,
       this.react, this.vision);
+
+  /// What this tier actually changes, for the settings screen. Percentages are
+  /// relative to a bot at full strength, so the numbers move when you switch.
+  List<(String, String)> get spec => [
+        ('BOT AIM', '${(skill * 100).round()}%'),
+        ('BOT DAMAGE', '${(damage * 100).round()}%'),
+        ('REACTION', '${(react * 100).round()}%'),
+        ('SPOT RANGE', '${(vision * 100).round()}%'),
+      ];
 }
 
 const List<Difficulty> kDifficulties = [
@@ -64,15 +73,34 @@ class Quality {
   final double fx; // particle count multiplier
   final int decals; // how many permanent marks stay on the ground
   final bool weather; // drifting dust/rain layer
+  /// Glow strength on muzzle flashes, tracers, the zone edge and pickups.
+  /// 0 draws the flat shape only — cheap, and the honest difference you can
+  /// see the instant you fire a gun.
+  final double bloom;
+  /// Soft contact shadow under every character, crate and tree.
+  final bool shadows;
   const Quality(this.id, this.name, this.tagline, this.detail, this.fx,
-      this.decals, this.weather);
+      this.decals, this.weather, this.bloom, this.shadows);
+
+  /// One line per thing this level actually changes — used by the settings
+  /// screen so the choice is legible instead of three mystery words.
+  List<(String, String)> get spec => [
+        ('BLOOM & GLOW', bloom <= 0 ? 'OFF' : '${(bloom * 100).round()}%'),
+        ('PARTICLES', '${(fx * 100).round()}%'),
+        ('GROUND DETAIL', '${(detail * 100).round()}%'),
+        ('BULLET MARKS', '$decals'),
+        ('CONTACT SHADOWS', shadows ? 'ON' : 'OFF'),
+        ('DUST & WEATHER', weather ? 'ON' : 'OFF'),
+      ];
 }
 
 const List<Quality> kQualities = [
-  Quality('battery', 'SMOOTH', 'Fewer effects · best frame rate', 0.35, 0.45,
-      30, false),
-  Quality('balanced', 'BALANCED', 'The default mix', 0.75, 0.85, 90, true),
-  Quality('high', 'ULTRA', 'Everything on · newer phones', 1.25, 1.3, 170, true),
+  Quality('battery', 'SMOOTH', 'Flat lighting · fewest effects · best frame rate',
+      0.35, 0.45, 30, false, 0.0, false),
+  Quality('balanced', 'BALANCED', 'Glow, shadows and dust · the default mix',
+      0.75, 0.85, 90, true, 0.75, true),
+  Quality('high', 'ULTRA', 'Full bloom, heavy particles · newer phones', 1.25,
+      1.3, 170, true, 1.4, true),
 ];
 
 // ============================ Armour ==========================

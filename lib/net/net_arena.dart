@@ -19,6 +19,7 @@ import '../ui/capture.dart';
 import '../ui/room_screens.dart';
 import '../ui/theme.dart';
 import '../ui/hud_controls.dart';
+import '../ui/result_screen.dart';
 import 'net_client.dart';
 
 /// Full-screen multiplayer flow: a connect form (server address + room code),
@@ -1027,6 +1028,103 @@ class _Tracer {
 }
 
 /// A short-lived visual: muzzle flash, impact spark, explosion ember, smoke.
+/// The circular tactical minimap from the mockups — the safe ring, the walls,
+/// nearby contacts and you. The solo match draws the same thing from its own
+/// world, so both modes show the same picture.
+class _NetMiniMap extends StatelessWidget {
+  final NetClient c;
+  final Offset? self;
+  final double size;
+  const _NetMiniMap({required this.c, required this.self, this.size = 96});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        shape: BoxShape.circle,
+        border: Border.all(color: ZR.primary.withValues(alpha: 0.55), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+              color: ZR.primary.withValues(alpha: 0.18),
+              blurRadius: 14,
+              spreadRadius: -4)
+        ],
+      ),
+      child: ClipOval(child: CustomPaint(painter: _NetMiniMapPainter(c, self))),
+    );
+  }
+}
+
+class _NetMiniMapPainter extends CustomPainter {
+  final NetClient c;
+  final Offset? self;
+  _NetMiniMapPainter(this.c, this.self);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.width / c.world;
+    Offset m(double x, double y) => Offset(x * s, y * s);
+    final fill = Paint()..style = PaintingStyle.fill;
+    final stroke = Paint()..style = PaintingStyle.stroke;
+
+    // safe ring
+    canvas.drawCircle(
+        m(c.zoneX, c.zoneY),
+        c.zoneR * s,
+        stroke
+          ..color = ZR.secondary
+          ..strokeWidth = 1.5);
+    canvas.drawCircle(m(c.zoneX, c.zoneY), c.zoneR * s,
+        fill..color = ZR.secondary.withValues(alpha: 0.06));
+
+    // hard cover, so the map reads as a place rather than dots on a disc
+    for (final o in c.obstacles) {
+      if (!o.blocks) continue;
+      canvas.drawRect(
+          Rect.fromLTWH(o.x * s, o.y * s, math.max(1, o.w * s),
+              math.max(1, o.h * s)),
+          fill..color = Colors.white.withValues(alpha: 0.16));
+    }
+    for (final w in c.walls) {
+      canvas.drawRect(
+          Rect.fromLTWH(w.x * s, w.y * s, math.max(1, w.w * s),
+              math.max(1, w.h * s)),
+          fill..color = ZR.tertiary.withValues(alpha: 0.7));
+    }
+
+    // contacts within detection range, exactly as the solo radar works
+    final me = self;
+    const detect = 780.0;
+    for (final p in c.players) {
+      if (!p.alive || p.id == c.myId) continue;
+      if (me != null && (Offset(p.x, p.y) - me).distance > detect) continue;
+      canvas.drawCircle(m(p.x, p.y), 2.4, fill..color = ZR.danger);
+    }
+
+    // you, as an amber pip with a ring
+    if (me != null) {
+      canvas.drawCircle(m(me.dx, me.dy), 5,
+          fill..color = ZR.primary.withValues(alpha: 0.28));
+      canvas.drawCircle(m(me.dx, me.dy), 2.8, fill..color = ZR.primary);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _NetMiniMapPainter old) => true;
+}
+
+/// One line of the client-derived kill feed.
+class _FeedLine {
+  final String killer;
+  final String victim;
+  final bool mine;
+  double life = 5.0;
+  _FeedLine(this.killer, this.victim, this.mine);
+}
+
 class _Fx {
   Offset pos;
   Offset vel;
@@ -1076,6 +1174,22 @@ class _ArenaViewState extends State<_ArenaView>
   // ---- per-frame ticker: drives prediction + interpolation at display rate --
   late final Ticker _ticker;
   final ValueNotifier<int> _frame = ValueNotifier(0);
+  double _worldT = 0;
+
+  // Kill feed, killstreak banner and zone state — derived from snapshots so
+  // the online HUD carries the same information the solo one does.
+  final Map<int, int> _lastKills = {};
+  final Map<int, bool> _lastAlive = {};
+  final List<_FeedLine> _feed = [];
+  String? _streakTitle;
+  int _streakKills = 0;
+  double _streakT = 0; // window in which further kills extend the streak
+  double _bannerT = 0; // how long the banner stays up
+  double _lastZoneR = 1e9;
+  bool _zoneClosing = false;
+  double _zoneStillT = 0; // time since the ring last moved
+  double _reloadT = 0; // local reload clock, so the bar animates online too
+  bool _wasReloading = false;
   Duration _last = Duration.zero;
 
   // ---- spectate / kill-cam ----
@@ -1220,6 +1334,31 @@ class _ArenaViewState extends State<_ArenaView>
     _spawnEvents(c);
     _stepTracers(dt);
     _stepFx(dt);
+    _worldT += dt; // drives the drifting dust layer
+
+    // HUD timers
+    if (_streakT > 0) _streakT -= dt;
+    if (_bannerT > 0) _bannerT -= dt;
+    for (final f in _feed) {
+      f.life -= dt;
+    }
+    _feed.removeWhere((f) => f.life <= 0);
+    if (_zoneClosing) {
+      _zoneStillT -= dt;
+      if (_zoneStillT <= 0) _zoneClosing = false;
+    }
+    final meNow = c.me;
+    if (meNow != null) {
+      final r = meNow.reloading;
+      if (r && !_wasReloading) {
+        _reloadT = kWeapons[WeaponId.values[
+                    meNow.wi.clamp(0, WeaponId.values.length - 1)]]!
+                .reloadTime;
+      } else if (r && _reloadT > 0) {
+        _reloadT -= dt;
+      }
+      _wasReloading = r;
+    }
 
     _sinceRender += dt;
     if (_sinceRender >= 1 / _maxRenderHz) {
@@ -1252,6 +1391,55 @@ class _ArenaViewState extends State<_ArenaView>
     final banner = c.matchWinner ?? c.roundBanner;
     if (banner != null && banner != _lastBanner) Sfx.win();
     _lastBanner = banner;
+
+    // Kill feed and killstreaks, derived on the client.
+    //
+    // The server sends kill *counts*, not kill events, so a death is matched
+    // to whoever's tally went up on the same tick. That is exactly right in
+    // every normal case and, at worst, credits a simultaneous double-kill to
+    // one of two candidates — a far better trade than shipping no feed at all.
+    final risers = <NetPlayer>[];
+    for (final p in c.players) {
+      final prev = _lastKills[p.id];
+      if (prev != null && p.kills > prev) risers.add(p);
+      _lastKills[p.id] = p.kills;
+    }
+    for (final p in c.players) {
+      final was = _lastAlive[p.id];
+      _lastAlive[p.id] = p.alive;
+      if (was != true || p.alive) continue;
+      final killer = risers.isEmpty
+          ? null
+          : risers.reduce((a, b) => a.id == c.myId ? a : b);
+      _feed.insert(
+          0,
+          _FeedLine(killer?.name ?? 'THE ZONE', p.name,
+              killer != null && killer.id == c.myId));
+      if (_feed.length > 5) _feed.removeLast();
+    }
+    // my own streak — same thresholds the solo match uses
+    final mine = risers.where((p) => p.id == c.myId).length;
+    if (mine > 0) {
+      if (_streakT <= 0) _streakKills = 0;
+      _streakKills += mine;
+      _streakT = 4.0;
+      if (_streakKills >= 2) {
+        _streakTitle = switch (_streakKills) {
+          2 => 'DOUBLE KILL',
+          3 => 'TRIPLE KILL',
+          4 => 'RAMPAGE',
+          _ => 'UNSTOPPABLE',
+        };
+        _bannerT = 2.2;
+      }
+    }
+
+    // the ring is "closing" whenever it is actually shrinking
+    if (c.zoneR < _lastZoneR - 0.05) {
+      _zoneClosing = true;
+      _zoneStillT = 1.2;
+    }
+    _lastZoneR = c.zoneR;
   }
 
   /// Where a shooter is being DRAWN right now — the predicted position for
@@ -1289,7 +1477,8 @@ class _ArenaViewState extends State<_ArenaView>
       }
       // muzzle flash + smoke + brass, at the barrel
       final tip = from + Offset(math.cos(aim) * muzzle, math.sin(aim) * muzzle);
-      for (var i = 0; i < 3; i++) {
+      final gfx = Profile.instance.gfx;
+      for (var i = 0; i < (3 * gfx.fx).round().clamp(1, 6); i++) {
         final a = aim + (_rng.nextDouble() - 0.5) * 0.6;
         _fx.add(_Fx(tip, Offset(math.cos(a) * 130, math.sin(a) * 130), 0.09, 4,
             const Color(0xFFFFE9A8)));
@@ -1316,14 +1505,15 @@ class _ArenaViewState extends State<_ArenaView>
     for (final b in c.boomQueue) {
       final d = (b - _camPos).distance;
       if (d < 900) Sfx.boom();
-      for (var i = 0; i < 22; i++) {
+      final gfx = Profile.instance.gfx;
+      for (var i = 0; i < (22 * gfx.fx).round().clamp(6, 44); i++) {
         final a = _rng.nextDouble() * math.pi * 2;
         final sp = 90 + _rng.nextDouble() * 300;
         _fx.add(_Fx(b, Offset(math.cos(a) * sp, math.sin(a) * sp),
             0.28 + _rng.nextDouble() * 0.35, 6,
             i.isEven ? const Color(0xFFFFB020) : const Color(0xFFFF5A2A)));
       }
-      for (var i = 0; i < 8; i++) {
+      for (var i = 0; i < (8 * gfx.fx).round().clamp(2, 16); i++) {
         final a = _rng.nextDouble() * math.pi * 2;
         _fx.add(_Fx(b, Offset(math.cos(a) * 50, math.sin(a) * 50), 0.9, 12,
             const Color(0x77555560)));
@@ -1392,6 +1582,13 @@ class _ArenaViewState extends State<_ArenaView>
   void _cycleSpectate() => setState(() => _specIdx++);
 
   /// The equipped hero's skill icon, so the button reads the same as solo.
+  // (kHeroes' element type is named Hero, which collides with the Flutter
+  // widget of that name, so these read it without naming the type.)
+  Color _heroColor() =>
+      Color(kHeroes[Profile.instance.hero.clamp(0, kHeroes.length - 1)].color);
+  double _heroCooldown() =>
+      kHeroes[Profile.instance.hero.clamp(0, kHeroes.length - 1)].cooldown;
+
   IconData _skillIcon() {
     final hero = kHeroes[Profile.instance.hero.clamp(0, kHeroes.length - 1)];
     switch (hero.skill) {
@@ -1450,97 +1647,64 @@ class _ArenaViewState extends State<_ArenaView>
 
   Widget _matchOver(NetClient c, NetPlayer? me) {
     final won = me != null && me.name == c.matchWinner;
-    final accent = won ? kAccent : kAccent2;
+    // top of the lobby on kills — the same rule the solo screen uses
+    final best = c.players.fold<int>(0, (m, p) => p.kills > m ? p.kills : m);
     return Positioned.fill(
-      child: Container(
-        color: Colors.black.withValues(alpha: 0.82),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  RepaintBoundary(
-                    key: _shotKey,
-                    child: Container(
-                      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            accent.withValues(alpha: 0.18),
-                            const Color(0xFF05070C)
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: accent.withValues(alpha: 0.5)),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('ZONE ROYALE  //  CUSTOM ROOM',
-                              style: TextStyle(
-                                  fontFamily: _mono,
-                                  color: accent,
-                                  fontSize: 11,
-                                  letterSpacing: 2,
-                                  fontWeight: FontWeight.w900)),
-                          const SizedBox(height: 14),
-                          Text(won ? 'WINNER WINNER' : 'MATCH OVER',
-                              style: TextStyle(
-                                  color: won ? Colors.white : accent,
-                                  fontSize: 30,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 2)),
-                          const SizedBox(height: 6),
-                          Text('${c.matchWinner} WINS'.toUpperCase(),
-                              style: TextStyle(
-                                  color: accent,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 1)),
-                          const SizedBox(height: 18),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              _stat('KILLS', '${me?.kills ?? 0}'),
-                              _stat('ROUNDS WON', '${me?.wins ?? 0}'),
-                              _stat('PLAYERS', '${c.players.length}'),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Expanded(
-                          child: _ghostBtn(Icons.ios_share, 'SHARE',
-                              () => _shareResult(context, c))),
-                      const SizedBox(width: 12),
-                      Expanded(
-                          child: _ghostBtn(
-                              Icons.logout, 'LEAVE ROOM', widget.onLeave)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text('Next match starts automatically…',
-                      style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.4),
-                          fontSize: 11)),
-                ],
+      child: MatchResultView(
+        cardKey: _shotKey,
+        onBack: widget.onLeave,
+        result: MatchResult(
+          won: won,
+          mode: c.rounds > 1 ? 'CUSTOM ROOM' : 'QUICK MATCH',
+          placement: won ? '#1' : null,
+          headline: won ? 'WINNER WINNER' : 'MATCH OVER',
+          subtitle: '${c.matchWinner ?? '—'} WINS'.toUpperCase(),
+          mvp: me != null && me.kills > 0 && me.kills >= best,
+          stats: [
+            ('KILLS', '${me?.kills ?? 0}'),
+            ('ROUNDS WON', '${me?.wins ?? 0}'),
+            ('OPERATORS', '${c.players.length}'),
+            ('PING', c.pingMs == 0 ? '—' : '${c.pingMs} MS'),
+          ],
+        ),
+        actions: [
+          Expanded(
+            child: ZrGhostButton(
+                label: 'SHARE',
+                icon: Icons.ios_share,
+                height: 46,
+                color: ZR.secondary,
+                onTap: () => _shareResult(context, c)),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ZrGhostButton(
+                label: 'LEAVE ROOM',
+                icon: Icons.logout,
+                height: 46,
+                color: Colors.white54,
+                onTap: widget.onLeave),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 2,
+            child: Container(
+              height: 46,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white12),
               ),
+              child: Text('NEXT MATCH STARTS AUTOMATICALLY…',
+                  style: ZR.mono(9, color: Colors.white38, spacing: 1.4)),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  static const _mono = 'monospace';
 
   Widget _stat(String k, String v) => Column(
         children: [
@@ -1626,6 +1790,7 @@ class _ArenaViewState extends State<_ArenaView>
                       camId: cam?.id ?? c.myId,
                       tracers: _tracers,
                       fx: _fx,
+                      time: _worldT,
                     ),
                   ),
                 );
@@ -1651,6 +1816,8 @@ class _ArenaViewState extends State<_ArenaView>
     final spectating = me != null && !me.alive && c.matchWinner == null;
     final cam = _camTarget(c);
     final pickup = me == null ? null : _pickupTarget(c, me);
+    // in the fight: alive, and the match is still running
+    final live = c.matchWinner == null && (me?.alive ?? false);
     return Stack(
       children: [
         // No snapshot for us yet: say so instead of showing an empty arena
@@ -1722,7 +1889,8 @@ class _ArenaViewState extends State<_ArenaView>
               ),
             ),
           ),
-        // top HUD
+        // Top HUD — the same pills, zone strip and minimap the solo match
+        // shows, in the same places, so both modes read identically.
         Positioned(
           top: 8,
           left: 12,
@@ -1730,31 +1898,109 @@ class _ArenaViewState extends State<_ArenaView>
           child: SafeArea(
             bottom: false,
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _pill('ALIVE  ${c.aliveCount}'),
-                if (c.rounds > 1)
-                  _pill('ROUND  ${c.round}/${c.rounds * 2 - 1}', color: kAccent),
-                _pill('${me?.kills ?? 0} KILLS'),
+                GestureDetector(
+                  onTap: widget.onLeave,
+                  child: Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: const Icon(Icons.home_rounded,
+                        size: 18, color: Colors.white70),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                HudPill('${c.aliveCount}',
+                    color: ZR.primary, icon: Icons.person),
+                const SizedBox(width: 8),
+                HudPill('${me?.kills ?? 0}',
+                    color: ZR.danger, icon: Icons.gps_fixed),
+                if (c.rounds > 1) ...[
+                  const SizedBox(width: 8),
+                  HudPill('R${c.round}/${c.rounds * 2 - 1}',
+                      color: ZR.secondary, icon: Icons.flag),
+                ],
+                const SizedBox(width: 8),
                 // measurable smoothness + network health
-                _pill('$_fps FPS',
+                HudPill('$_fps',
+                    icon: Icons.speed,
                     color: _fps >= 80
-                        ? const Color(0xFF57E389)
-                        : (_fps >= 50 ? kAccent : kAccent2)),
-                _pill(c.pingMs == 0 ? '— MS' : '${c.pingMs} MS',
+                        ? ZR.success
+                        : (_fps >= 50 ? ZR.primary : ZR.danger)),
+                const SizedBox(width: 8),
+                HudPill(c.pingMs == 0 ? '—' : '${c.pingMs}',
+                    icon: Icons.wifi,
                     color: c.pingMs == 0
                         ? Colors.white54
                         : (c.pingMs < 100
-                            ? const Color(0xFF57E389)
-                            : (c.pingMs < 200 ? kAccent : kAccent2))),
-                GestureDetector(
-                  onTap: widget.onLeave,
-                  child: _pill('LEAVE', color: kAccent2),
-                ),
+                            ? ZR.success
+                            : (c.pingMs < 200 ? ZR.primary : ZR.danger))),
+                const Spacer(),
+                _NetMiniMap(
+                    c: c,
+                    self: _hasSelf ? Offset(_selfX, _selfY) : null,
+                    size: size.width > size.height ? 82 : 104),
               ],
             ),
           ),
         ),
+        // zone strip, centred under the top row
+        Positioned(
+          top: safe.top + 44,
+          left: 0,
+          right: 0,
+          child: IgnorePointer(
+            child: Center(
+              child: HudZoneStrip(
+                closing: _zoneClosing,
+                time: _zoneClosing
+                    ? 'NOW'
+                    : '${(c.zoneR / 100).clamp(0, 99).round()}',
+                progress: 1 - (c.zoneR / (c.world * 0.94)).clamp(0.0, 1.0),
+              ),
+            ),
+          ),
+        ),
+        // kill feed down the left, under the top row
+        if (_feed.isNotEmpty)
+          Positioned(
+            left: safe.left + 14,
+            top: safe.top + 52,
+            child: IgnorePointer(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final f in _feed)
+                    HudKillFeedLine(
+                        killer: f.killer.toUpperCase(),
+                        victim: f.victim.toUpperCase(),
+                        mine: f.mine,
+                        alpha: (f.life / 1.2).clamp(0.0, 1.0)),
+                ],
+              ),
+            ),
+          ),
+        // killstreak banner — the thing people screenshot
+        if (_bannerT > 0 && _streakTitle != null)
+          Positioned(
+            top: size.height * (size.width > size.height ? 0.16 : 0.24),
+            left: 0,
+            right: 0,
+            child: IgnorePointer(
+              child: Center(
+                child: HudStreakBanner(
+                  title: _streakTitle!,
+                  kills: _streakKills,
+                  alpha: (_bannerT / 0.7).clamp(0.0, 1.0),
+                ),
+              ),
+            ),
+          ),
         // match over screen (takes priority) — shareable, like the solo end card
         if (c.matchWinner != null) _matchOver(c, me)
         // round result banner
@@ -1785,155 +2031,187 @@ class _ArenaViewState extends State<_ArenaView>
               ),
             ),
           ),
-        // Controls come from the SHARED set (lib/ui/hud_controls.dart), so a
-        // custom room and a solo match hand you exactly the same sticks,
-        // buttons and panels in exactly the same places.
-        hudPlace(
-          size,
-          Profile.instance.leftHanded ? 'aim' : 'move',
-          HudStick(
-            stickKey: const ValueKey('js-move'),
-            label: 'MOVE',
-            accent: kSafeEdge,
-            onChange: (d) => _move = d,
-            onRelease: () => _move = Offset.zero,
-          ),
-          132,
-          158,
-          safe,
-        ),
-        hudPlace(
-          size,
-          Profile.instance.leftHanded ? 'move' : 'aim',
-          HudStick(
-            stickKey: const ValueKey('js-aim'),
-            label: 'AIM · FIRE',
-            accent: kAccent2,
-            onChange: _aimStick,
-            onRelease: () => _fire = false,
-          ),
-          132,
-          158,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'skill',
-          HudActionButton(
-            glyph: Icon(_skillIcon(), size: 26, color: const Color(0xFFB06BFF)),
-            label: (me?.cd ?? 0) > 0 ? '${me?.cd}' : 'SKILL',
-            color: const Color(0xFFB06BFF),
-            ready: (me?.cd ?? 0) <= 0,
-            onTap: () => _skillQ = true,
-          ),
-          64,
-          64,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'nade',
-          HudActionButton(
-            glyph: const Text('💣', style: TextStyle(fontSize: 19)),
-            label: '${me?.nades ?? 0}',
-            color: const Color(0xFF6ABF5A),
-            ready: (me?.nades ?? 0) > 0,
-            onTap: () => _nadeQ = true,
-            size: 60,
-          ),
-          60,
-          60,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'wall',
-          HudActionButton(
-            glyph: SizedBox(
-              width: 24,
-              height: 16,
-              child: CustomPaint(
-                  painter: ShieldWallGlyph(lit: (me?.walls ?? 0) > 0)),
-            ),
-            label: '${me?.walls ?? 0}',
-            color: const Color(0xFF7FE8FF),
-            ready: (me?.walls ?? 0) > 0,
-            onTap: () => _wallQ = true,
-            size: 60,
-          ),
-          60,
-          60,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'reload',
-          HudWeaponPanel(
-            weapon: WeaponId.values[
-                (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)],
-            ammo: me?.ammo ?? 0,
-            reloading: me?.reloading ?? false,
-            reloadFrac: 0.5,
-            onTap: () => _reloadQ = true,
-          ),
-          130,
-          80,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'swap',
-          HudSwapPanel(
-            other: (me == null || me.wi2 < 0)
-                ? null
-                : WeaponId.values[me.wi2.clamp(0, WeaponId.values.length - 1)],
-            onTap: () => _swapQ = true,
-          ),
-          74,
-          66,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'fire',
-          HudFireMode(
-            supportsAuto: kWeapons[WeaponId.values[
-                    (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)]]!
-                .auto,
-            auto: Profile.instance.fireAuto,
-            onTap: () {},
-          ),
-          64,
-          64,
-          safe,
-        ),
-        hudPlace(
-          size,
-          'hp',
-          HudHealth(
-            hp: me?.hp ?? 0,
-            vestFrac: (me?.vest ?? 0) / 100,
-            helmetFrac: (me?.helmet ?? 0) / 100,
-          ),
-          150,
-          52,
-          safe,
-        ),
-        if (pickup != null)
+        // Once the match is decided nothing you press does anything, and
+        // leaving the sticks and panels floating over the result card is the
+        // fastest way to make a win look like a bug. Controls exist only while
+        // you are actually in the fight.
+        if (live) ...[
+          // Controls come from the SHARED set (lib/ui/hud_controls.dart), so a
+          // custom room and a solo match hand you exactly the same sticks,
+          // buttons and panels in exactly the same places.
           hudPlace(
             size,
-            'pick',
-            HudPickupPrompt(
-              offered: WeaponId.values[
-                  pickup.wi.clamp(0, WeaponId.values.length - 1)],
-              held: WeaponId.values[
-                  (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)],
-              onTap: () => _takeQ = true,
+            Profile.instance.leftHanded ? 'aim' : 'move',
+            HudStick(
+              stickKey: const ValueKey('js-move'),
+              label: 'MOVE',
+              accent: ZR.secondary,
+              icon: Icons.open_with,
+              onChange: (d) => _move = d,
+              onRelease: () => _move = Offset.zero,
             ),
-            168,
-            52,
+            132,
+            158,
             safe,
           ),
+          hudPlace(
+            size,
+            Profile.instance.leftHanded ? 'move' : 'aim',
+            HudStick(
+              stickKey: const ValueKey('js-aim'),
+              label: 'AIM · FIRE',
+              accent: ZR.danger,
+              icon: Icons.gps_fixed,
+              onChange: _aimStick,
+              onRelease: () => _fire = false,
+            ),
+            132,
+            158,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'skill',
+            HudActionButton(
+              glyph: (me?.cd ?? 0) > 0
+                  ? Text('${me?.cd}', style: ZR.display(22))
+                  : Icon(_skillIcon(), size: 24, color: _heroColor()),
+              label: 'READY',
+              color: _heroColor(),
+              ready: (me?.cd ?? 0) <= 0,
+              charge: (me?.cd ?? 0) <= 0
+                  ? 1
+                  : 1 - ((me!.cd) / _heroCooldown()).clamp(0.0, 1.0),
+              onTap: () => _skillQ = true,
+            ),
+            64,
+            64,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'nade',
+            HudActionButton(
+              glyph: const Text('💣', style: TextStyle(fontSize: 17)),
+              label: 'NADE',
+              color: const Color(0xFF6ABF5A),
+              ready: (me?.nades ?? 0) > 0,
+              count: '${me?.nades ?? 0}',
+              charge: (me?.nades ?? 0) > 0 ? 1 : 0,
+              onTap: () => _nadeQ = true,
+              size: 60,
+            ),
+            60,
+            60,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'wall',
+            HudActionButton(
+              glyph: SizedBox(
+                width: 22,
+                height: 15,
+                child: CustomPaint(
+                    painter: ShieldWallGlyph(lit: (me?.walls ?? 0) > 0)),
+              ),
+              label: 'WALL',
+              color: ZR.tertiary,
+              ready: (me?.walls ?? 0) > 0,
+              count: '${me?.walls ?? 0}',
+              charge: (me?.walls ?? 0) > 0 ? 1 : 0,
+              onTap: () => _wallQ = true,
+              size: 60,
+            ),
+            60,
+            60,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'reload',
+            HudWeaponPanel(
+              weapon: WeaponId.values[
+                  (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)],
+              ammo: me?.ammo ?? 0,
+              reloading: me?.reloading ?? false,
+              // clocked locally off the weapon's own reload time, so the bar
+              // fills at the real rate instead of sitting frozen at half
+              reloadFrac: 1 -
+                  (_reloadT /
+                          kWeapons[WeaponId.values[
+                                  (me?.wi ?? 5)
+                                      .clamp(0, WeaponId.values.length - 1)]]!
+                              .reloadTime)
+                      .clamp(0.0, 1.0),
+              onTap: () => _reloadQ = true,
+            ),
+            140,
+            84,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'swap',
+            HudSwapPanel(
+              other: (me == null || me.wi2 < 0)
+                  ? null
+                  : WeaponId.values[me.wi2.clamp(0, WeaponId.values.length - 1)],
+              onTap: () => _swapQ = true,
+            ),
+            80,
+            66,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'fire',
+            HudFireMode(
+              supportsAuto: kWeapons[WeaponId.values[
+                      (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)]]!
+                  .auto,
+              auto: Profile.instance.fireAuto,
+              // this used to be a dead control online — it now flips the same
+              // setting the solo match reads
+              onTap: () {
+                setState(() {
+                  Profile.instance.fireAuto = !Profile.instance.fireAuto;
+                });
+                Profile.instance.save();
+              },
+            ),
+            64,
+            64,
+            safe,
+          ),
+          hudPlace(
+            size,
+            'hp',
+            HudHealth(
+              hp: me?.hp ?? 0,
+              vestFrac: (me?.vest ?? 0) / 100,
+              helmetFrac: (me?.helmet ?? 0) / 100,
+            ),
+            158,
+            56,
+            safe,
+          ),
+          if (pickup != null)
+            hudPlace(
+              size,
+              'pick',
+              HudPickupPrompt(
+                offered: WeaponId.values[
+                    pickup.wi.clamp(0, WeaponId.values.length - 1)],
+                held: WeaponId.values[
+                    (me?.wi ?? 5).clamp(0, WeaponId.values.length - 1)],
+                onTap: () => _takeQ = true,
+              ),
+              168,
+              52,
+              safe,
+            ),
+        ],
       ],
     );
   }
@@ -1966,12 +2244,14 @@ class _ArenaPainter extends CustomPainter {
   final int camId; // who the camera follows (you, or a spectated player)
   final List<_Tracer> tracers;
   final List<_Fx> fx;
+  final double time;
   _ArenaPainter(this.c,
       {this.selfPos,
       this.selfAim = 0,
       required this.camId,
       required this.tracers,
-      required this.fx});
+      required this.fx,
+      this.time = 0});
 
   // Smoothed world transforms, computed once per frame: predicted for you,
   // interpolated for everyone else.
@@ -1980,6 +2260,13 @@ class _ArenaPainter extends CustomPainter {
 
   final Paint _fill = Paint()..style = PaintingStyle.fill;
   final Paint _stroke = Paint()..style = PaintingStyle.stroke;
+
+  /// Same fidelity setting the solo match honours — read once per frame so
+  /// SMOOTH / BALANCED / ULTRA look identical in both modes.
+  Quality _q = kQualities[1];
+  final Paint _glow = Paint()
+    ..style = PaintingStyle.fill
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9);
 
   void _resolveTransforms() {
     _pos.clear();
@@ -2024,6 +2311,7 @@ class _ArenaPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     _resolveTransforms();
+    _q = Profile.instance.gfx;
 
     final cols = _groundFor(c.map);
     final camPos = _pos[camId] ?? Offset(c.world / 2, c.world / 2);
@@ -2061,8 +2349,26 @@ class _ArenaPainter extends CustomPainter {
     _drawGas(canvas, vL, vT, vR, vB);
     canvas.restore();
 
+    _drawAtmosphere(canvas, size);
     _drawLabels(canvas, size, camX, camY, scale, onScreen);
     _drawVignette(canvas, size);
+  }
+
+  /// The same drifting dust the solo match has, in screen space between the
+  /// camera and the world. Off at SMOOTH, which is most of what makes that
+  /// level feel lighter.
+  void _drawAtmosphere(Canvas canvas, Size size) {
+    if (!_q.weather) return;
+    final n = (34 * _q.detail).round().clamp(8, 60);
+    for (var i = 0; i < n; i++) {
+      final seed = i * 37.0;
+      final speed = 12 + (i % 5) * 7;
+      final x = ((seed * 13.7 + time * speed) % (size.width + 60)) - 30;
+      final y = (seed * 29.3 + math.sin(time * 0.5 + i) * 14) % size.height;
+      final r = 0.8 + (i % 4) * 0.55;
+      canvas.drawCircle(Offset(x, y), r,
+          _fill..color = Colors.white.withValues(alpha: 0.05 + (i % 3) * 0.018));
+    }
   }
 
   // ---------------------------------------------------------------- ground
@@ -2077,8 +2383,9 @@ class _ArenaPainter extends CustomPainter {
     _fill.shader = null;
 
     // Ground detail: stable patches + gravel, only for the cells in view. This
-    // is what stops the floor reading as flat coloured paper.
-    const cell = 160.0;
+    // is what stops the floor reading as flat coloured paper. A bigger cell at
+    // SMOOTH means fewer patches per screen — the same knob the solo map uses.
+    final cell = 160.0 / _q.detail.clamp(0.35, 1.4);
     final x0 = (vL / cell).floor(), x1 = (vR / cell).ceil();
     final y0 = (vT / cell).floor(), y1 = (vB / cell).ceil();
     for (var gx = x0; gx <= x1; gx++) {
@@ -2341,6 +2648,16 @@ class _ArenaPainter extends CustomPainter {
     for (final t in tracers) {
       if (!vis(t.pos.dx, t.pos.dy, 30)) continue;
       final back = t.pos - t.vel * (0.022 * (0.6 + t.width));
+      if (_q.bloom > 0) {
+        canvas.drawLine(
+            back,
+            t.pos,
+            Paint()
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5)
+              ..color = t.color.withValues(alpha: 0.5 * _q.bloom)
+              ..strokeWidth = 8 * t.width * _q.bloom
+              ..strokeCap = StrokeCap.round);
+      }
       canvas.drawLine(
           back,
           t.pos,
@@ -2362,6 +2679,12 @@ class _ArenaPainter extends CustomPainter {
     for (final f in fx) {
       if (!vis(f.pos.dx, f.pos.dy, 20)) continue;
       final a = (f.life / f.maxLife).clamp(0.0, 1.0);
+      if (_q.bloom > 0) {
+        canvas.drawCircle(
+            f.pos,
+            f.size * a * 2.1 * _q.bloom,
+            _glow..color = f.color.withValues(alpha: a * 0.4 * _q.bloom));
+      }
       canvas.drawCircle(f.pos, f.size * a,
           _fill..color = f.color.withValues(alpha: a * 0.95));
     }
@@ -2413,10 +2736,18 @@ class _ArenaPainter extends CustomPainter {
       // grounded shadow, matching the map's single light direction
       canvas.drawOval(
           Rect.fromCenter(
-              center: pos.translate(4, kPlayerRadius * 0.62),
-              width: kPlayerRadius * 2.1,
-              height: kPlayerRadius * 0.9),
-          _fill..color = Colors.black.withValues(alpha: 0.4));
+              center: pos.translate(_q.shadows ? 4 : 2, kPlayerRadius * 0.62),
+              width: kPlayerRadius * (_q.shadows ? 2.1 : 1.7),
+              height: kPlayerRadius * (_q.shadows ? 0.9 : 0.7)),
+          _fill..color = Colors.black.withValues(alpha: _q.shadows ? 0.4 : 0.22));
+      if (_q.shadows) {
+        canvas.drawOval(
+            Rect.fromCenter(
+                center: pos.translate(2, kPlayerRadius * 0.45),
+                width: kPlayerRadius * 1.4,
+                height: kPlayerRadius * 0.58),
+            _fill..color = Colors.black.withValues(alpha: 0.24));
+      }
 
       if (mine) {
         canvas.drawCircle(

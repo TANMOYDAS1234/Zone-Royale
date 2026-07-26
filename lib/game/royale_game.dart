@@ -76,6 +76,16 @@ class RoyaleGame extends FlameGame {
   Rect _viewRect = Rect.zero;
   final Paint _fill = Paint()..style = PaintingStyle.fill;
   final Paint _stroke = Paint()..style = PaintingStyle.stroke;
+
+  /// The graphics-fidelity level, refreshed once per frame. Everything that is
+  /// pure lighting — bloom haloes, contact shadows, dust — reads from here, so
+  /// SMOOTH / BALANCED / ULTRA is a difference you can actually see.
+  Quality _q = kQualities[1];
+  /// A blurred paint for glow passes. Blur is the expensive part, so it is
+  /// built once and skipped entirely when bloom is off.
+  final Paint _glow = Paint()
+    ..style = PaintingStyle.fill
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9);
   final Paint _gasFillPaint = Paint()..color = kGasFill;
   /// Reused every frame — allocating a Path per frame churns the heap.
   final Path _gasPath = Path();
@@ -129,7 +139,8 @@ class RoyaleGame extends FlameGame {
   final List<_DirMark> _hitMarks = []; // directional damage indicators
   double _hitMarkerT = 0; // white hit-marker flash when you tag an enemy
   final List<_DmgText> _dmgTexts = []; // floating damage numbers
-  final List<_KillLine> _killLog = []; // recent-eliminations kill feed
+  /// Recent eliminations, newest last. Read by the HUD.
+  final List<KillFeedLine> killLog = [];
 
   // ---- killstreaks (the bit people screenshot) ----
   int streakKills = 0; // kills inside the current streak window
@@ -241,7 +252,7 @@ class RoyaleGame extends FlameGame {
     _decals.clear();
     _shocks.clear();
     _dmgTexts.clear();
-    _killLog.clear();
+    killLog.clear();
     _hitMarks.clear();
     _hitMarkerT = 0;
     toast = null;
@@ -559,10 +570,10 @@ class RoyaleGame extends FlameGame {
       d.pos.y -= 32 * dt; // drift up
     }
     _dmgTexts.removeWhere((d) => d.life <= 0);
-    for (final k in _killLog) {
+    for (final k in killLog) {
       k.life -= dt;
     }
-    _killLog.removeWhere((k) => k.life <= 0);
+    killLog.removeWhere((k) => k.life <= 0);
   }
 
   // ----- player driving -----
@@ -1607,27 +1618,8 @@ class RoyaleGame extends FlameGame {
   }
 
   void _addKillLine(Character killer, Character victim) {
-    final kColor = killer == player ? kAccent : const Color(0xFFDDE3EC);
-    final painter = tp.TextPainter(
-      text: tp.TextSpan(
-        style: const tp.TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          shadows: [Shadow(color: Color(0xCC000000), blurRadius: 2)],
-        ),
-        children: [
-          tp.TextSpan(text: killer.name, style: tp.TextStyle(color: kColor)),
-          const tp.TextSpan(
-              text: '  ▸  ', style: tp.TextStyle(color: Color(0xFFFF5A5F))),
-          tp.TextSpan(
-              text: victim.name,
-              style: const tp.TextStyle(color: Color(0xFFAAB2BE))),
-        ],
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    _killLog.add(_KillLine(painter, 4.0));
-    if (_killLog.length > 5) _killLog.removeAt(0);
+    killLog.add(KillFeedLine(killer.name, victim.name, killer == player, 4.0));
+    if (killLog.length > 5) killLog.removeAt(0);
   }
 
   void _checkEnd() {
@@ -1860,6 +1852,8 @@ class RoyaleGame extends FlameGame {
   void render(Canvas canvas) {
     super.render(canvas);
     if (size.x <= 0) return;
+    // read the fidelity setting once a frame instead of per draw call
+    _q = Profile.instance.gfx;
     final z = zoom;
     final sx = _shakeX;
     final sy = _shakeY;
@@ -1894,7 +1888,6 @@ class RoyaleGame extends FlameGame {
     _drawHitMarker(canvas);
     _drawGasVignette(canvas);
     _drawLowHp(canvas);
-    _drawKillFeed(canvas);
   }
 
   /// A thin layer of dust motes drifting between the camera and the world.
@@ -1930,23 +1923,6 @@ class RoyaleGame extends FlameGame {
                 const Color(0xFFB14BFF).withValues(alpha: alpha),
               ],
               [0.55, 1.0]));
-  }
-
-  void _drawKillFeed(Canvas canvas) {
-    if (_killLog.isEmpty || size.x <= 0) return;
-    // Portrait: top-right under the minimap. Landscape: top-LEFT, because the
-    // right side of a short screen is already carrying the minimap and the
-    // action buttons.
-    final landscape = size.x > size.y;
-    var y = landscape ? size.y * 0.22 : 155.0;
-    for (var i = _killLog.length - 1; i >= 0; i--) {
-      final k = _killLog[i];
-      final x = landscape
-          ? 16.0 + safeLeft
-          : size.x - 14 - safeRight - k.painter.width;
-      k.painter.paint(canvas, Offset(x, y));
-      y += 20;
-    }
   }
 
   void _drawDmgTexts(Canvas canvas) {
@@ -2562,6 +2538,17 @@ class RoyaleGame extends FlameGame {
         b.pos.y - (b.pos.y - b.prev.y) * tail,
       );
       final bb = Offset(b.pos.x, b.pos.y);
+      if (_q.bloom > 0) {
+        // a lit tracer: the round leaves a streak of light, not just a line
+        canvas.drawLine(
+            a,
+            bb,
+            Paint()
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5)
+              ..color = b.color.withValues(alpha: 0.5 * _q.bloom)
+              ..strokeWidth = 8 * b.tracer * _q.bloom
+              ..strokeCap = StrokeCap.round);
+      }
       canvas.drawLine(
           a,
           bb,
@@ -2606,18 +2593,27 @@ class RoyaleGame extends FlameGame {
       final r = c.radius;
 
       // grounded shadow — offset down-right like every other shadow on the map
-      canvas.drawOval(
-          Rect.fromCenter(
-              center: pos.translate(6, r * 0.7),
-              width: r * 2.25,
-              height: r * 0.95),
-          _fill..color = const Color(0x4D000000));
-      canvas.drawOval(
-          Rect.fromCenter(
-              center: pos.translate(3, r * 0.5),
-              width: r * 1.5,
-              height: r * 0.6),
-          _fill..color = const Color(0x3D000000));
+      if (_q.shadows) {
+        canvas.drawOval(
+            Rect.fromCenter(
+                center: pos.translate(6, r * 0.7),
+                width: r * 2.25,
+                height: r * 0.95),
+            _fill..color = const Color(0x4D000000));
+        canvas.drawOval(
+            Rect.fromCenter(
+                center: pos.translate(3, r * 0.5),
+                width: r * 1.5,
+                height: r * 0.6),
+            _fill..color = const Color(0x3D000000));
+      } else {
+        // SMOOTH still needs the figure to sit on the ground, just without a
+        // second pass — one flat ellipse instead of a layered soft shadow.
+        canvas.drawOval(
+            Rect.fromCenter(
+                center: pos.translate(2, r * 0.6), width: r * 1.7, height: r * 0.7),
+            _fill..color = const Color(0x33000000));
+      }
 
       // player ground ring
       if (c == player) {
@@ -2666,6 +2662,15 @@ class RoyaleGame extends FlameGame {
         final k = (c.muzzle / 0.06).clamp(0.0, 1.0);
         final tip = c.pos + fromAngle(c.aim) * (r * 2.15);
         final o = Offset(tip.x, tip.y);
+        // ULTRA throws real light off the barrel; SMOOTH skips the blur pass
+        if (_q.bloom > 0) {
+          canvas.drawCircle(
+              o,
+              26 * k * _q.bloom,
+              _glow
+                ..color =
+                    const Color(0xFFFFB02E).withValues(alpha: 0.45 * k * _q.bloom));
+        }
         canvas.drawCircle(o, 20 * k,
             _fill..color = const Color(0xFFFFC24B).withValues(alpha: 0.22 * k));
         final cone = Path()
@@ -2832,8 +2837,13 @@ class _DmgText {
 }
 
 /// A "Killer ▸ Victim" line in the kill feed.
-class _KillLine {
-  final tp.TextPainter painter;
+/// One elimination in the kill feed. Held as plain data so the HUD can draw
+/// it with the same widget the online arena uses, instead of each mode
+/// painting its own text.
+class KillFeedLine {
+  final String killer;
+  final String victim;
+  final bool mine;
   double life;
-  _KillLine(this.painter, this.life);
+  KillFeedLine(this.killer, this.victim, this.mine, this.life);
 }
