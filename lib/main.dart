@@ -8,8 +8,12 @@ import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'game/profile.dart';
 import 'game/royale_game.dart';
 import 'game/sfx.dart';
+import 'i18n/strings.dart';
 import 'ui/brand.dart';
 import 'ui/game_ui.dart';
+import 'ui/language_screen.dart';
+import 'ui/tutorial.dart';
+import 'ui/tutorial_script.dart';
 import 'ui/home_screen.dart';
 import 'ui/missions_screen.dart';
 import 'ui/profile_screen.dart';
@@ -60,6 +64,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _useHighRefreshRate();
   await Profile.instance.load();
+  L.current = Profile.instance.language; // before the first frame is built
   Profile.instance.touchStreak(); // advance the daily login streak
   await applyOrientation();
   Sfx.init(); // fire-and-forget: generates + loads sounds in the background
@@ -105,6 +110,8 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
   final FocusNode _focus = FocusNode();
   final Set<LogicalKeyboardKey> _keys = {};
   bool _showSplash = true;
+  /// Shown once, before anything else, on a genuinely new install.
+  bool _pickLanguage = !Profile.instance.languagePicked;
 
   @override
   void initState() {
@@ -118,6 +125,20 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     // screen and stops the moment a match starts, and each change gets a
     // whoosh under it so moving between screens feels like movement.
     game.screen.addListener(_onScreenChanged);
+    // The tour drives the app: a step that explains the profile puts the
+    // player on the profile first.
+    Tutorial.instance.navigator = (screen) => game.screen.value = screen;
+    if (!_pickLanguage) _maybeStartTutorial();
+  }
+
+  /// Begin the guided tour, if this install has never seen it.
+  void _maybeStartTutorial() {
+    if (Profile.instance.tutorialDone || Tutorial.instance.running) return;
+    // one frame, so the home screen's anchors have reported their rects
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || Profile.instance.tutorialDone) return;
+      Tutorial.instance.start(fullTutorial());
+    });
   }
 
   void _onScreenChanged() {
@@ -127,6 +148,11 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     } else {
       Sfx.whoosh(vol: 0.35);
       Sfx.startMenuMusic();
+    }
+    // the tour follows the player into the match and onto the results card
+    if (Tutorial.instance.running && (s == Screen.playing || s == Screen.end)) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => Tutorial.instance.jumpToScreen(s));
     }
   }
 
@@ -250,6 +276,17 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                   },
                 ),
               ),
+              // The tour sits above the whole app — menus AND the live match.
+              const TutorialOverlay(),
+              if (_pickLanguage && !_showSplash)
+                Positioned.fill(
+                  child: LanguageScreen(
+                    onPicked: (_) {
+                      setState(() => _pickLanguage = false);
+                      _maybeStartTutorial();
+                    },
+                  ),
+                ),
               if (_showSplash)
                 Positioned.fill(
                   child: SplashScreen(
@@ -258,6 +295,7 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                       // the bed starts as the front end appears, not over the
                       // splash — the first thing you hear should be the menu
                       Sfx.startMenuMusic();
+                      if (!_pickLanguage) _maybeStartTutorial();
                     },
                   ),
                 ),

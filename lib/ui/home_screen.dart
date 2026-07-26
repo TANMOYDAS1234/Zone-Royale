@@ -8,6 +8,8 @@ import '../net/net_arena.dart';
 import 'map_select.dart';
 import 'shell.dart';
 import 'theme.dart';
+import 'tutorial.dart';
+import '../i18n/strings.dart';
 
 /// HOME / OPERATIONS HUB.
 ///
@@ -61,7 +63,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Expanded(flex: 5, child: ZrOperatorStage(height: 999, key: ValueKey(_look()))),
+                        Expanded(
+                            flex: 5,
+                            child: TutorialAnchor(
+                              id: 'home.operator',
+                              child: ZrOperatorStage(
+                                  height: 999, key: ValueKey(_look())),
+                            )),
                         const SizedBox(width: 16),
                         Expanded(flex: 6, child: _console()),
                       ],
@@ -96,23 +104,41 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(flex: 6, child: _streakCard()),
+              Expanded(
+                  flex: 6,
+                  child: TutorialAnchor(
+                      id: 'home.streak', child: _streakCard())),
               const SizedBox(width: 10),
-              Expanded(flex: 5, child: _difficultyCard()),
+              Expanded(
+                  flex: 5,
+                  child: TutorialAnchor(
+                      id: 'home.difficulty', child: _difficultyCard())),
             ],
           ),
         ),
         const SizedBox(height: 12),
         const ZrSectionLabel('MISSION PARAMETERS'),
         const SizedBox(height: 8),
-        for (var i = 0; i < kMatchModes.length; i++) ...[
-          _modeRow(i),
-          if (i < kMatchModes.length - 1) const SizedBox(height: 7),
-        ],
+        TutorialAnchor(
+          id: 'home.mode',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < kMatchModes.length; i++) ...[
+                _modeRow(i),
+                if (i < kMatchModes.length - 1) const SizedBox(height: 7),
+              ],
+            ],
+          ),
+        ),
         const SizedBox(height: 10),
-        _mapRow(),
+        TutorialAnchor(id: 'home.maps', child: _mapRow()),
         const SizedBox(height: 12),
-        ZrButton(label: 'DROP IN', onTap: _drop, height: 48, fontSize: 24),
+        TutorialAnchor(
+          id: 'home.drop',
+          child: ZrButton(
+              label: 'DROP IN', onTap: _drop, height: 48, fontSize: 24),
+        ),
         const SizedBox(height: 9),
         ZrGhostButton(
           label: 'CUSTOM ROOM  ·  PLAY ONLINE',
@@ -236,7 +262,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Icon(ready ? Icons.card_giftcard : Icons.local_fire_department,
                     size: 15, color: ready ? ZR.primary : Colors.white38),
                 const SizedBox(width: 7),
-                Text('7-DAY STREAK', style: ZR.display(16, spacing: 1)),
+                Text(trUp('7-DAY STREAK'), style: ZR.display(16, spacing: 1)),
               ],
             ),
             const SizedBox(height: 8),
@@ -286,7 +312,7 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('DIFFICULTY', style: ZR.display(16, spacing: 1)),
+          Text(trUp('DIFFICULTY'), style: ZR.display(16, spacing: 1)),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -295,7 +321,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 Expanded(
                   child: GestureDetector(
                     onTap: () => setState(() {
-        Sfx.tap();
                       Sfx.tap();
                       p.difficulty = i;
                       p.save();
@@ -315,7 +340,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 : Colors.transparent),
                       ),
                       child: FittedBox(
-                        child: Text(kDifficulties[i].name,
+                        fit: BoxFit.scaleDown,
+                        child: Text(trUp(kDifficulties[i].name),
                             style: ZR.display(14,
                                 color: p.difficulty == i
                                     ? ZR.secondary
@@ -329,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(p.diff.tagline.toUpperCase(),
+          Text(trUp(p.diff.tagline),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: ZR.mono(9, color: Colors.white30, spacing: 0.6)),

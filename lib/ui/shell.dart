@@ -7,6 +7,8 @@ import '../game/sfx.dart';
 import '../game/royale_game.dart';
 import 'logo.dart';
 import 'theme.dart';
+import 'tutorial.dart';
+import '../i18n/strings.dart';
 
 /// Shared app chrome: the tactical top bar and the bottom tab rail that every
 /// meta screen sits between. Keeping them here means HOME / SHOP / MISSIONS /
@@ -61,9 +63,11 @@ class ZrTopBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(subtitle!.toUpperCase(),
+                  Text(trUp(subtitle!),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: ZR.mono(11, color: Colors.white70, spacing: 1.6)),
-                  Text('SYSTEMS ONLINE',
+                  Text(trUp('SYSTEMS ONLINE'),
                       style: ZR.mono(9, color: ZR.success, spacing: 1.2)),
                 ],
               ),
@@ -134,9 +138,13 @@ class _NavTab extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label,
-                style: ZR.display(17,
-                    color: active ? ZR.primary : Colors.white60, spacing: 1.4)),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(trUp(label),
+                  style: ZR.display(17,
+                      color: active ? ZR.primary : Colors.white60,
+                      spacing: 1.4)),
+            ),
             const SizedBox(height: 3),
             AnimatedContainer(
               duration: const Duration(milliseconds: 180),
@@ -221,14 +229,17 @@ class ZrBottomNav extends StatelessWidget {
             children: [
               for (final it in _items)
                 Expanded(
-                  child: _NavButton(
-                    icon: _icon(it[0]),
-                    label: it[1],
-                    active: active == it[0],
-                    onTap: () {
-                      Sfx.select();
-                      game.screen.value = it[0];
-                    },
+                  child: TutorialAnchor(
+                    id: 'nav.${it[0]}',
+                    child: _NavButton(
+                      icon: _icon(it[0]),
+                      label: it[1],
+                      active: active == it[0],
+                      onTap: () {
+                        Sfx.select();
+                        game.screen.value = it[0];
+                      },
+                    ),
                   ),
                 ),
             ],
@@ -268,7 +279,13 @@ class _NavButton extends StatelessWidget {
           children: [
             Icon(icon, size: 21, color: col),
             const SizedBox(height: 3),
-            Text(label, style: ZR.display(14, color: col, spacing: 1.2)),
+            // Bengali and Hindi words are longer than the English ones, so
+            // every fixed-width label shrinks to fit rather than overflowing.
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(trUp(label),
+                  style: ZR.display(14, color: col, spacing: 1.2)),
+            ),
           ],
         ),
       ),
@@ -336,7 +353,7 @@ class ZrOperatorStage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('WEAPON',
+                        Text(trUp('WEAPON'),
                             style: ZR.mono(9, color: Colors.white38)),
                         Text(kWeapons[p.startWeapon]!.name.toUpperCase(),
                             style: ZR.display(15, spacing: 1)),
@@ -347,7 +364,7 @@ class ZrOperatorStage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('LOADOUT',
+                        Text(trUp('LOADOUT'),
                             style: ZR.mono(9, color: Colors.white38)),
                         Text('ASSAULT-01', style: ZR.display(15, spacing: 1)),
                       ],
@@ -362,7 +379,7 @@ class ZrOperatorStage extends StatelessWidget {
                             color: ZR.success, shape: BoxShape.circle),
                       ),
                       const SizedBox(width: 6),
-                      Text('STATUS: READY',
+                      Text(trUp('STATUS: READY'),
                           style: ZR.mono(10, color: ZR.success)),
                     ],
                   ),

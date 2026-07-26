@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../game/config.dart';
 import '../game/profile.dart';
+import 'capture.dart';
 import 'shell.dart';
 import 'theme.dart';
+import '../i18n/strings.dart';
 
 /// Everything the end screen needs, from either mode.
 class MatchResult {
@@ -72,6 +74,10 @@ class _MatchResultViewState extends State<MatchResultView>
   void initState() {
     super.initState();
     if (widget.result.won) _c.repeat();
+    // Encode the shareable card NOW, while the player is still reading their
+    // placement. By the time anyone taps SHARE the PNG is already on disk and
+    // the sheet opens with no wait at all.
+    prewarmShareCard(widget.cardKey, token: widget.cardKey);
   }
 
   @override
@@ -145,7 +151,7 @@ class _MatchResultViewState extends State<MatchResultView>
                 height: 30,
                 child: Icon(Icons.arrow_back, color: Colors.white70, size: 20)),
           ),
-        Text('MATCH SUMMARY', style: ZR.display(24, spacing: 1.6)),
+        Text(trUp('MATCH SUMMARY'), style: ZR.display(24, spacing: 1.6)),
         const SizedBox(width: 10),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
@@ -154,7 +160,7 @@ class _MatchResultViewState extends State<MatchResultView>
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: accent.withValues(alpha: 0.6)),
           ),
-          child: Text(r.mode.toUpperCase(),
+          child: Text(trUp(r.mode),
               style: ZR.mono(9, color: accent, spacing: 1.2)),
         ),
         const Spacer(),
@@ -204,16 +210,17 @@ class _MatchResultViewState extends State<MatchResultView>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text('ZONE ROYALE  //  ${r.won ? 'VICTORY' : 'DEFEAT'}',
+                  Text('ZONE ROYALE  //  '
+                      '${trUp(r.won ? 'VICTORY' : 'DEFEAT')}',
                       style: ZR.mono(9, color: accent, spacing: 2.4)),
                   if (r.placement != null)
                     Text(r.placement!,
                         style: ZR.display(64,
                             color: accent, spacing: 1, height: 0.95)),
-                  Text(r.headline,
+                  Text(trUp(r.headline),
                       style: ZR.display(28,
                           color: r.won ? Colors.white : accent, spacing: 1.6)),
-                  Text(r.subtitle,
+                  Text(trUp(r.subtitle),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: ZR.mono(9, color: Colors.white38, spacing: 2.6)),
@@ -273,7 +280,7 @@ class _MatchResultViewState extends State<MatchResultView>
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(label.toUpperCase(),
+                      Text(trUp(label),
                           style: ZR.mono(8, color: Colors.white38)),
                       Text(value, style: ZR.display(22, spacing: 0.5)),
                     ],

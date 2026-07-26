@@ -39,6 +39,51 @@ Future<Uint8List?> captureBoundary(GlobalKey key,
   return null;
 }
 
+/// A card that has already been captured and written to disk, ready to hand
+/// straight to the share sheet.
+///
+/// Encoding a PNG and writing it takes a few hundred milliseconds. Doing that
+/// AFTER the tap is why sharing felt broken — you press the button and nothing
+/// happens for a beat. So the results screen pre-warms it the moment it
+/// appears: by the time anyone reaches for SHARE the file is already there and
+/// the sheet opens instantly.
+class _PrewarmedCard {
+  String? path;
+  Object? key; // which card this belongs to
+  Future<void>? inFlight;
+}
+
+final _PrewarmedCard _prewarm = _PrewarmedCard();
+
+/// Capture [cardKey] in the background and keep the file for [shareCard].
+/// Safe to call repeatedly; only the first call for a given [token] works.
+void prewarmShareCard(GlobalKey cardKey,
+    {required Object token, String fileStem = 'zone_royale'}) {
+  if (_prewarm.key == token && (_prewarm.path != null || _prewarm.inFlight != null)) {
+    return;
+  }
+  _prewarm
+    ..key = token
+    ..path = null;
+  _prewarm.inFlight = () async {
+    try {
+      // give the screen a moment to settle so we capture the finished card
+      await Future<void>.delayed(const Duration(milliseconds: 260));
+      final png = await captureBoundary(cardKey, attempts: 3);
+      if (png == null) return;
+      final dir = await getTemporaryDirectory();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/${fileStem}_$stamp.png');
+      await file.writeAsBytes(png, flush: true);
+      if (_prewarm.key == token) _prewarm.path = file.path;
+    } catch (_) {
+      // no pre-warmed file; shareCard falls back to capturing on demand
+    } finally {
+      _prewarm.inFlight = null;
+    }
+  }();
+}
+
 /// One share path for the whole game (result card, room result, anything else).
 ///
 /// The old code swallowed every failure, so a share that didn't work looked
@@ -62,31 +107,48 @@ Future<void> shareCard(
         backgroundColor: const Color(0xFF14181F),
       ));
 
-  // Encoding the card and handing it to Android takes a moment. Say so
-  // immediately — silence for a second reads as "the button is broken".
-  say('Preparing your result card…', seconds: 1);
-
   // Share sheets need an anchor rect on iPad; harmless (and useful) elsewhere.
   final box = context.findRenderObject() as RenderBox?;
   final origin = box != null && box.hasSize
       ? box.localToGlobal(Offset.zero) & box.size
       : const Rect.fromLTWH(0, 0, 1, 1);
 
-  Uint8List? png;
-  try {
-    png = await captureBoundary(cardKey);
-  } catch (_) {
-    png = null;
+  // The fast path: the screen pre-warmed this card, so there is nothing to do
+  // but open the sheet.
+  var path = _prewarm.path;
+  if (path == null && _prewarm.inFlight != null) {
+    // capture started but hasn't landed — wait for it rather than starting a
+    // second, competing capture
+    say('Preparing your result card…', seconds: 1);
+    await _prewarm.inFlight;
+    path = _prewarm.path;
   }
 
-  if (png != null) {
+  if (path == null) {
+    say('Preparing your result card…', seconds: 1);
+    Uint8List? png;
     try {
-      final dir = await getTemporaryDirectory();
-      final stamp = DateTime.now().millisecondsSinceEpoch;
-      final file = File('${dir.path}/${fileStem}_$stamp.png');
-      await file.writeAsBytes(png, flush: true);
+      png = await captureBoundary(cardKey);
+    } catch (_) {
+      png = null;
+    }
+    if (png != null) {
+      try {
+        final dir = await getTemporaryDirectory();
+        final stamp = DateTime.now().millisecondsSinceEpoch;
+        final file = File('${dir.path}/${fileStem}_$stamp.png');
+        await file.writeAsBytes(png, flush: true);
+        path = file.path;
+      } catch (_) {
+        path = null;
+      }
+    }
+  }
+
+  if (path != null) {
+    try {
       final res = await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path, mimeType: 'image/png')],
+        files: [XFile(path, mimeType: 'image/png')],
         text: text,
         subject: subject,
         sharePositionOrigin: origin,

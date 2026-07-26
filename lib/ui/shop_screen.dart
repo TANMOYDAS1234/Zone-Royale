@@ -7,6 +7,7 @@ import '../game/royale_game.dart';
 import '../game/sfx.dart';
 import 'shell.dart';
 import 'theme.dart';
+import '../i18n/strings.dart';
 
 /// SHOP / ARMORY.
 ///
@@ -278,7 +279,7 @@ class _ShopScreenState extends State<ShopScreen> {
                   border: Border.all(
                       color: _cat == c ? ZR.primary : ZR.line),
                 ),
-                child: Text(_catLabel[c]!,
+                child: Text(trUp(_catLabel[c]!),
                     style: ZR.display(17,
                         color: _cat == c
                             ? const Color(0xFF10131A)
@@ -296,7 +297,7 @@ class _ShopScreenState extends State<ShopScreen> {
     final items = _items();
     if (items.isEmpty) {
       return Center(
-        child: Text('NOTHING HERE YET — UNLOCK A HERO FIRST',
+        child: Text(trUp('NOTHING HERE YET — UNLOCK A HERO FIRST'),
             style: ZR.mono(11, color: Colors.white38, spacing: 1)),
       );
     }
@@ -336,7 +337,7 @@ class _ShopScreenState extends State<ShopScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(it.rarity,
+                  Text(trUp(it.rarity),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: ZR.mono(8, color: Colors.white38, spacing: 0.8)),
@@ -382,7 +383,7 @@ class _ShopScreenState extends State<ShopScreen> {
           borderRadius: BorderRadius.circular(7),
           border: Border.all(color: ZR.primary),
         ),
-        child: Text('EQUIPPED',
+        child: Text(trUp('EQUIPPED'),
             style: ZR.display(14, color: ZR.primary, spacing: 1)),
       );
     }
@@ -400,7 +401,7 @@ class _ShopScreenState extends State<ShopScreen> {
           children: [
             const Icon(Icons.check_circle, size: 12, color: ZR.success),
             const SizedBox(width: 5),
-            Text('OWNED · TAP TO EQUIP',
+            Text(trUp('OWNED · TAP TO EQUIP'),
                 maxLines: 1,
                 overflow: TextOverflow.clip,
                 style: ZR.display(12, color: ZR.success, spacing: 0.5)),

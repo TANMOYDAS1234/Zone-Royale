@@ -219,7 +219,11 @@ class RoyaleGame extends FlameGame {
   }
 
   void spectate() {
-    if (!resultWon) screen.value = Screen.playing;
+    if (resultWon) return;
+    // the death branch stopped the simulation, so watching the rest of the
+    // match has to start it again
+    playing = true;
+    screen.value = Screen.playing;
   }
 
   /// Quit the current match and return to the home / start menu.
@@ -1650,6 +1654,11 @@ class RoyaleGame extends FlameGame {
     }
     if (!player.alive && !endShown) {
       endShown = true;
+      // Stop simulating. The win branch already did this; the death branch did
+      // not, so after being eliminated the bots kept fighting underneath the
+      // results card and you carried on hearing gunfire over your own summary.
+      // SPECTATE turns it back on deliberately.
+      playing = false;
       resultWon = false;
       resultPlacement = player.placement;
       if (!_recorded) {

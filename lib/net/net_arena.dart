@@ -21,6 +21,7 @@ import '../ui/theme.dart';
 import '../ui/hud_controls.dart';
 import '../ui/result_screen.dart';
 import 'net_client.dart';
+import '../i18n/strings.dart';
 
 /// Full-screen multiplayer flow: a connect form (server address + room code),
 /// then the live networked arena once the socket is up. Push this with
@@ -266,7 +267,7 @@ class _MultiplayerScreenState extends State<MultiplayerScreen>
               child: const Icon(Icons.grid_view_rounded, color: kAccent, size: 24),
             ),
             const SizedBox(width: 12),
-            const Text('ZONE ROYALE',
+            Text(trUp('ZONE ROYALE'),
                 style: TextStyle(
                     color: kAccent,
                     fontSize: 24,
@@ -2021,10 +2022,10 @@ class _ArenaViewState extends State<_ArenaView>
           )
         // death banner
         else if (me != null && !me.alive)
-          const Positioned.fill(
+          Positioned.fill(
             child: IgnorePointer(
               child: Center(
-                child: Text('ELIMINATED',
+                child: Text(trUp('ELIMINATED'),
                     style: TextStyle(
                         color: kAccent2,
                         fontSize: 34,

@@ -42,6 +42,13 @@ class Profile {
   /// many permanent marks stay on the ground — the dial to turn if the game
   /// ever feels like it is stuttering on your phone.
   int quality = 1;
+  /// Index into L.codes — 0 English, 1 Bengali, 2 Hindi.
+  int language = 0;
+  /// False until the guided tour has run (or been skipped, or arrived with a
+  /// restored profile — a returning player should never be taught again).
+  bool tutorialDone = false;
+  /// True once the first-run language picker has been answered.
+  bool languagePicked = false;
   /// Menu/background music level, 0 = off.
   double musicVolume = 0.5;
   /// Everything else — gunfire, UI clicks, explosions.
@@ -325,6 +332,9 @@ class Profile {
       orientation = (p.getInt('orientation') ?? 0).clamp(0, 2);
       shake = (p.getDouble('shake') ?? 0.5).clamp(0.0, 1.0);
       quality = (p.getInt('quality') ?? 1).clamp(0, kQualities.length - 1);
+      language = (p.getInt('language') ?? 0).clamp(0, 2);
+      tutorialDone = p.getBool('tutorialDone') ?? false;
+      languagePicked = p.getBool('languagePicked') ?? false;
       musicVolume = (p.getDouble('musicVol') ?? 0.5).clamp(0.0, 1.0);
       sfxVolume = (p.getDouble('sfxVol') ?? 0.9).clamp(0.0, 1.0);
       streak = p.getInt('streak') ?? 0;
@@ -410,6 +420,9 @@ class Profile {
       await p.setInt('orientation', orientation);
       await p.setDouble('shake', shake);
       await p.setInt('quality', quality);
+      await p.setInt('language', language);
+      await p.setBool('tutorialDone', tutorialDone);
+      await p.setBool('languagePicked', languagePicked);
       await p.setDouble('musicVol', musicVolume);
       await p.setDouble('sfxVol', sfxVolume);
       await p.setInt('streak', streak);
@@ -476,6 +489,7 @@ class Profile {
         'difficulty': difficulty,
         'musicVol': musicVolume,
         'sfxVol': sfxVolume,
+        'language': language,
         'shake': shake,
         'matchMode': matchMode,
         'mapChoice': mapChoice,
@@ -539,6 +553,12 @@ class Profile {
     leftHanded = b('leftHanded', leftHanded);
     quality = i('quality', quality).clamp(0, kQualities.length - 1);
     musicVolume = d('musicVol', musicVolume).clamp(0.0, 1.0);
+    language = i('language', language).clamp(0, 2);
+    // A restored profile belongs to someone who already knows the game.
+    // Teaching them the joystick again would be insulting, so the tour is
+    // marked done and the language picker is skipped.
+    tutorialDone = true;
+    languagePicked = true;
     sfxVolume = d('sfxVol', sfxVolume).clamp(0.0, 1.0);
     difficulty = i('difficulty', difficulty).clamp(0, kDifficulties.length - 1);
     shake = d('shake', shake).clamp(0.0, 1.0);

@@ -179,32 +179,41 @@ void main() {
   file.writeAsBytesSync(_encodePng(px, kSize, kSize));
   print('wrote ${file.path} (${kSize}x$kSize)');
 
-  // Second pass: the branding mark used by the native launch screen — the
-  // emblem alone on the app background, no plate, so it sits invisibly on the
-  // splash colour and matches the in-app logo.
+  // Second pass: the branding mark used by the native launch screen.
+  //
+  // Two things matter here and both were wrong before:
+  //  * TRANSPARENT background. The file used to be opaque RGB, so the splash
+  //    showed a black square sitting on the dark-blue splash colour.
+  //  * ROOM around the mark. The shield is taller than it is wide and its
+  //    point runs past the canonical box, so at the old scale the bottom tip
+  //    was cropped off. It is drawn smaller and nudged up to sit centred.
   const brand = 768;
-  final bp = Uint8List(brand * brand * 3);
+  const fit = 0.60; // fraction of the canvas the emblem may occupy
+  const shiftY = -0.02; // the shield's mass sits low; lift it to optical centre
+  final bp = Uint8List(brand * brand * 4);
   for (var iy = 0; iy < brand; iy++) {
     for (var ix = 0; ix < brand; ix++) {
       var mark = 0.0;
       for (var sy = 0; sy < kSamples; sy++) {
         for (var sx = 0; sx < kSamples; sx++) {
           final ux = (ix + (sx + 0.5) / kSamples) / brand - 0.5;
-          final uy = (iy + (sy + 0.5) / kSamples) / brand - 0.5;
-          if (_inEmblem(ux / 0.82, uy / 0.82)) mark += 1;
+          final uy = (iy + (sy + 0.5) / kSamples) / brand - 0.5 - shiftY;
+          if (_inEmblem(ux / fit, uy / fit)) mark += 1;
         }
       }
       mark /= kSamples * kSamples;
       final lit = _clamp01(0.5 - (iy / brand - 0.5) * 0.9);
-      final o = (iy * brand + ix) * 3;
-      bp[o] = _lerp(8, _lerp(255, 255, lit), mark).round().clamp(0, 255);
-      bp[o + 1] = _lerp(10, _lerp(176, 217, lit), mark).round().clamp(0, 255);
-      bp[o + 2] = _lerp(16, _lerp(46, 138, lit), mark).round().clamp(0, 255);
+      final o = (iy * brand + ix) * 4;
+      // premultiplied-safe: colour is the amber gradient, alpha is coverage
+      bp[o] = 255;
+      bp[o + 1] = _lerp(176, 217, lit).round().clamp(0, 255);
+      bp[o + 2] = _lerp(46, 138, lit).round().clamp(0, 255);
+      bp[o + 3] = (mark * 255).round().clamp(0, 255);
     }
   }
   final logo = File('assets/branding/logo.png');
   logo.parent.createSync(recursive: true);
-  logo.writeAsBytesSync(_encodePng(bp, brand, brand));
+  logo.writeAsBytesSync(_encodePngRgba(bp, brand, brand));
   print('wrote ${logo.path} (${brand}x$brand)');
 }
 
@@ -225,12 +234,29 @@ Uint8List _encodePng(Uint8List rgb, int w, int h) {
   return out.toBytes();
 }
 
-Uint8List _ihdr(int w, int h) {
+/// PNG writer for images WITH an alpha channel (colour type 6).
+Uint8List _encodePngRgba(Uint8List rgba, int w, int h) {
+  final raw = Uint8List(h * (w * 4 + 1));
+  var o = 0;
+  for (var y = 0; y < h; y++) {
+    raw[o++] = 0; // filter: none
+    raw.setRange(o, o + w * 4, rgba, y * w * 4);
+    o += w * 4;
+  }
+  final out = BytesBuilder();
+  out.add(Uint8List.fromList([137, 80, 78, 71, 13, 10, 26, 10]));
+  out.add(_chunk('IHDR', _ihdr(w, h, alpha: true)));
+  out.add(_chunk('IDAT', Uint8List.fromList(ZLibCodec(level: 6).encode(raw))));
+  out.add(_chunk('IEND', Uint8List(0)));
+  return out.toBytes();
+}
+
+Uint8List _ihdr(int w, int h, {bool alpha = false}) {
   final b = ByteData(13);
   b.setUint32(0, w);
   b.setUint32(4, h);
   b.setUint8(8, 8); // bit depth
-  b.setUint8(9, 2); // colour type: truecolour
+  b.setUint8(9, alpha ? 6 : 2); // 6 = truecolour + alpha, 2 = truecolour
   return b.buffer.asUint8List();
 }
 

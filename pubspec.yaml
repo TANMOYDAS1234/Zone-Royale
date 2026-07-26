@@ -103,6 +103,20 @@ flutter:
     - family: Mono             # tactical labels, readouts, codes
       fonts:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf
+    # Bebas Neue and Hanken Grotesk carry no Bengali or Devanagari glyphs, so
+    # a translated build would render as empty boxes without these. They are
+    # used as fontFamilyFallback, not as the primary family, so English is
+    # untouched and only the characters that need them reach for them.
+    - family: NotoBn           # বাংলা
+      fonts:
+        - asset: assets/fonts/notoBn-400.ttf
+        - asset: assets/fonts/notoBn-700.ttf
+          weight: 700
+    - family: NotoDv           # हिन्दी
+      fonts:
+        - asset: assets/fonts/notoDv-400.ttf
+        - asset: assets/fonts/notoDv-700.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   # assets:

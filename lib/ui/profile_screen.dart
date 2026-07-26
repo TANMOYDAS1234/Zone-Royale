@@ -9,6 +9,8 @@ import 'game_ui.dart' show ControlsEditor;
 import 'quality_preview.dart';
 import 'shell.dart';
 import 'theme.dart';
+import 'tutorial.dart';
+import '../i18n/strings.dart';
 
 /// PROFILE / OPERATOR CONFIG.
 ///
@@ -162,7 +164,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _card('IDENTITY CORE', Icons.fingerprint, [
-          Text('OPERATOR ALIAS', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('OPERATOR ALIAS'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 5),
           TextField(
             controller: _name,
@@ -190,36 +192,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ]),
         const SizedBox(height: 10),
         _card('VISUAL SIGNATURE', Icons.palette_outlined, [
-          Text('TACTICAL CAMOUFLAGE', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('TACTICAL CAMOUFLAGE'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
           _swatches(kOutfitColors.length, (i) => Color(kOutfitColors[i]),
               p.outfit, (i) => setState(() => p.outfit = i), 'o'),
           const SizedBox(height: 10),
-          Text('SKIN TONE', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('SKIN TONE'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
           _swatches(kSkinTones.length, (i) => Color(kSkinTones[i]), p.skin,
               (i) => setState(() => p.skin = i), null),
           const SizedBox(height: 10),
-          Text('HEAD GEAR', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('HEAD GEAR'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
           _chips(kAccessoryNames, p.accessory,
               (i) => setState(() => p.accessory = i), 'a'),
         ]),
         const SizedBox(height: 10),
         _card('COMBAT LOADOUT', Icons.gps_fixed, [
-          Text('STARTING WEAPON', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('STARTING WEAPON'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
           _chips([for (final w in kWeaponOrder) kWeapons[w]!.name],
               kWeaponOrder.indexOf(p.startWeapon), (i) {
             setState(() => p.startWeapon = kWeaponOrder[i]);
           }, 'W'),
           const SizedBox(height: 10),
-          Text('HERO', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('HERO'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
           _chips([for (final h in kHeroes) h.name], p.hero,
               (i) => setState(() => p.hero = i), 'h'),
           const SizedBox(height: 10),
-          Text('FIRE MODE', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('FIRE MODE'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
           _segment(const ['AUTO', 'SINGLE'], p.fireAuto ? 0 : 1,
               (i) => setState(() => p.fireAuto = i == 0)),
@@ -235,7 +237,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             p.save();
           }),
           const SizedBox(height: 4),
-          Text(p.diff.tagline.toUpperCase(),
+          Text(trUp(p.diff.tagline),
               style: ZR.mono(8, color: Colors.white30)),
           const SizedBox(height: 8),
           Wrap(
@@ -269,14 +271,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ]),
         const SizedBox(height: 10),
         _card('SCREEN & FEEL', Icons.tune, [
-          Text('GRAPHICS FIDELITY', style: ZR.mono(8, color: Colors.white38)),
+          Text(trUp('GRAPHICS FIDELITY'), style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 6),
-          _segment([for (final q in kQualities) q.name], p.quality, (i) {
-            setState(() => p.quality = i);
-            p.save();
-          }),
+          TutorialAnchor(
+            id: 'profile.graphics',
+            child: _segment([for (final q in kQualities) q.name], p.quality,
+                (i) {
+              setState(() => p.quality = i);
+              p.save();
+            }),
+          ),
           const SizedBox(height: 4),
-          Text(p.gfx.tagline.toUpperCase(),
+          Text(trUp(p.gfx.tagline),
               style: ZR.mono(8, color: Colors.white30)),
           const SizedBox(height: 8),
           // A live sample of the setting: the same muzzle flash, tracers,
@@ -314,7 +320,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           const SizedBox(height: 12),
           Row(
             children: [
-              Text('TACTICAL SCREEN SHAKE',
+              Text(trUp('TACTICAL SCREEN SHAKE'),
                   style: ZR.mono(8, color: Colors.white38)),
               const Spacer(),
               Text(p.shake <= 0.01 ? 'OFF' : '${(p.shake * 100).round()}%',
@@ -372,14 +378,76 @@ class _ProfileScreenState extends State<ProfileScreen> {
             },
           ),
           const SizedBox(height: 8),
+          TutorialAnchor(
+            id: 'profile.controls',
+            child: ZrGhostButton(
+              label: 'CUSTOMISE CONTROL PLACEMENT',
+              icon: Icons.open_with,
+              onTap: () {
+                Sfx.select();
+                Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => const ControlsEditor()));
+              },
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Language sits with the other things that change how the game
+          // looks and feels, and is also offered once on first launch — see
+          // LanguageScreen for why it cannot live here alone.
+          Text(trUp('LANGUAGE'), style: ZR.mono(8, color: Colors.white38)),
+          const SizedBox(height: 6),
+          TutorialAnchor(
+            id: 'profile.language',
+            child: Row(
+              children: [
+                for (var i = 0; i < L.codes.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () {
+                        Sfx.select();
+                        setState(() {
+                          p.language = i;
+                          L.current = i;
+                        });
+                        p.save();
+                        // every screen reads L.current at build time, so
+                        // bounce the screen notifier to rebuild the lot
+                        final cur = widget.game.screen.value;
+                        widget.game.screen.value = '';
+                        widget.game.screen.value = cur;
+                      },
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        height: 38,
+                        alignment: Alignment.center,
+                        decoration: p.language == i
+                            ? ZR.panelActive(radius: 9)
+                            : ZR.panel(radius: 9),
+                        child: Text(L.nativeNames[i],
+                            style: TextStyle(
+                              fontFamily: 'Display',
+                              fontFamilyFallback: const ['NotoBn', 'NotoDv'],
+                              fontSize: 18,
+                              height: 1.25,
+                              color: p.language == i
+                                  ? ZR.primary
+                                  : Colors.white70,
+                            )),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
           ZrGhostButton(
-            label: 'CUSTOMISE CONTROL PLACEMENT',
-            icon: Icons.open_with,
-            onTap: () {
-              Sfx.select();
-              Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const ControlsEditor()));
-            },
+            label: 'REPLAY TUTORIAL',
+            icon: Icons.school,
+            height: 40,
+            color: ZR.secondary,
+            onTap: _replayTutorial,
           ),
         ]),
         const SizedBox(height: 10),
@@ -398,7 +466,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          Text('MOVING TO ANOTHER PHONE',
+          Text(trUp('MOVING TO ANOTHER PHONE'),
               style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 2),
           // Spelled out, because the two buttons are a pair and neither makes
@@ -447,7 +515,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                 const Icon(Icons.restart_alt, size: 14, color: ZR.danger),
                 const SizedBox(width: 7),
-                Text('START OVER FROM SCRATCH',
+                Text(trUp('START OVER FROM SCRATCH'),
                     style: ZR.display(15, color: ZR.danger, spacing: 1)),
               ]),
             ),
@@ -507,6 +575,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _replayTutorial() async {
+    final p = Profile.instance;
+    p.tutorialDone = false;
+    await p.save();
+    if (!mounted) return;
+    // the tour opens on the home screen, where it starts
+    widget.game.screen.value = Screen.start;
   }
 
   // ------------------------------------------------------- cloud save
@@ -638,7 +715,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const Icon(Icons.lock, size: 11, color: Colors.white38),
                       const SizedBox(width: 5),
                     ],
-                    Text(names[i].toUpperCase(),
+                    Text(trUp(names[i]),
                         style: ZR.display(14,
                             color: locked
                                 ? Colors.white38
@@ -675,12 +752,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: sel == i ? ZR.primary : ZR.line),
                 ),
-                child: Text(labels[i],
-                    style: ZR.display(15,
-                        color: sel == i
-                            ? const Color(0xFF10131A)
-                            : Colors.white70,
-                        spacing: 0.8)),
+                // segments are equal-width, so a longer translation shrinks
+                // rather than spilling out of its box
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(trUp(labels[i]),
+                      maxLines: 1,
+                      style: ZR.display(15,
+                          color: sel == i
+                              ? const Color(0xFF10131A)
+                              : Colors.white70,
+                          spacing: 0.8)),
+                ),
               ),
             ),
           ),
