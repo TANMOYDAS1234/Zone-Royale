@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/sfx.dart';
 import '../game/royale_game.dart';
+import 'backup_screens.dart';
 import 'game_ui.dart' show ControlsEditor;
 import 'quality_preview.dart';
 import 'shell.dart';
@@ -398,27 +398,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          Text('TRANSFER CODE', style: ZR.mono(8, color: Colors.white38)),
+          Text('MOVING TO ANOTHER PHONE',
+              style: ZR.mono(8, color: Colors.white38)),
           const SizedBox(height: 2),
+          // Spelled out, because the two buttons are a pair and neither makes
+          // sense alone: one produces the code, the other consumes it.
           Text(
-              'For moving to a phone on a different account, or restoring '
-              'without waiting for a reinstall.',
+              'On the OLD phone tap SHOW MY CODE, then on the NEW phone tap '
+              'RESTORE and paste it. Only needed across different Google '
+              'accounts — a normal reinstall restores by itself.',
               style: ZR.mono(8, color: Colors.white24, spacing: 0.3)),
           const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: ZrGhostButton(
-                  label: 'COPY MY CODE',
-                  icon: Icons.copy_all,
+                  label: '1 · SHOW MY CODE',
+                  icon: Icons.qr_code_2,
                   height: 40,
-                  onTap: _copyBackupCode,
+                  onTap: _showBackupCode,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: ZrGhostButton(
-                  label: 'RESTORE',
+                  label: '2 · RESTORE',
                   icon: Icons.download,
                   height: 40,
                   color: ZR.primary,
@@ -514,91 +518,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ));
   }
 
-  Future<void> _copyBackupCode() async {
-    final code = Profile.instance.exportCode();
-    await Clipboard.setData(ClipboardData(text: code));
-    if (!mounted) return;
-    _toast('BACKUP CODE COPIED — PASTE IT SOMEWHERE SAFE');
+  Future<void> _showBackupCode() async {
+    await showBackupCode(context);
   }
 
   Future<void> _restoreFromCode() async {
-    final controller = TextEditingController();
-    final code = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: ZR.surface,
-        title: Text('RESTORE PROGRESS', style: ZR.display(22)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Paste the transfer code from your other device.',
-                style: ZR.body(12, color: Colors.white60)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              maxLines: 3,
-              style: ZR.mono(10, color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'ZR1-…',
-                hintStyle: ZR.mono(10, color: Colors.white24),
-                enabledBorder: const OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24)),
-                focusedBorder: const OutlineInputBorder(
-                    borderSide: BorderSide(color: ZR.primary)),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: Text('CANCEL', style: ZR.display(16, color: Colors.white38))),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(controller.text),
-              child: Text('RESTORE', style: ZR.display(16, color: ZR.primary))),
-        ],
-      ),
-    );
-    if (code == null || code.trim().isEmpty) return;
-    final ok = await Profile.instance.importCode(code);
-    if (!mounted) return;
-    if (ok) {
-      setState(() {});
-      _toast('PROGRESS RESTORED', color: ZR.success);
-    } else {
-      _toast("THAT CODE DIDN'T LOOK RIGHT", color: ZR.danger);
-    }
+    final ok = await showRestoreCode(context);
+    if (!mounted || !ok) return;
+    setState(() {});
+    _toast('PROGRESS RESTORED', color: ZR.success);
   }
 
   Future<void> _confirmReset() async {
-    final sure = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: ZR.surface,
-        title: Text('START OVER?', style: ZR.display(22, color: ZR.danger)),
-        content: Text(
-            'This erases your level, coins, stats and everything you have '
-            'bought. Your control layout and screen settings are kept.\n\n'
-            'Copy your transfer code first if you might want this back — '
-            'there is no undo.',
-            style: ZR.body(12, color: Colors.white70, height: 1.4)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text('KEEP MY PROGRESS',
-                  style: ZR.display(16, color: ZR.primary))),
-          TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: Text('ERASE EVERYTHING',
-                  style: ZR.display(16, color: ZR.danger))),
-        ],
-      ),
-    );
-    if (sure != true) return;
-    await Profile.instance.resetProgress();
-    if (!mounted) return;
+    final done = await showResetFlow(context);
+    if (!mounted || !done) return;
     setState(() {});
     _toast('PROGRESS RESET', color: ZR.danger);
   }
