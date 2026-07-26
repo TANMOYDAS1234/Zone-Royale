@@ -5,7 +5,6 @@ import 'package:share_plus/share_plus.dart';
 import '../game/profile.dart';
 import '../game/sfx.dart';
 import 'theme.dart';
-import '../i18n/strings.dart';
 
 /// Backup / restore / reset, as full screens rather than dialogs.
 ///
@@ -264,7 +263,7 @@ class _RestoreScreenState extends State<_RestoreScreen> {
           onTap: _paste,
         ),
         const SizedBox(height: 10),
-        Text(trUp('OR TYPE IT IN'), style: ZR.mono(8, color: Colors.white38)),
+        Text('OR TYPE IT IN', style: ZR.mono(8, color: Colors.white38)),
         const SizedBox(height: 5),
         TextField(
           controller: _controller,
@@ -335,7 +334,7 @@ class _ResetScreenState extends State<_ResetScreen> {
                 const Icon(Icons.warning_amber_rounded,
                     size: 15, color: ZR.danger),
                 const SizedBox(width: 8),
-                Text(trUp('THIS CANNOT BE UNDONE'),
+                Text('THIS CANNOT BE UNDONE',
                     style: ZR.display(18, color: ZR.danger, spacing: 1)),
               ]),
               const SizedBox(height: 8),

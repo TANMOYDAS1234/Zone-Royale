@@ -7,7 +7,6 @@ import '../game/config.dart';
 import '../game/profile.dart';
 import 'game_ui.dart' show Joystick;
 import 'theme.dart';
-import '../i18n/strings.dart';
 
 /// THE in-match control set — one implementation, used by both the offline
 /// match and the online arena.
@@ -108,13 +107,9 @@ class HudStick extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: accent.withValues(alpha: 0.45)),
           ),
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(trUp(label),
-                maxLines: 1,
-                style: ZR.display(13,
-                    color: accent.withValues(alpha: 0.95), spacing: 1.4)),
-          ),
+          child: Text(label,
+              style: ZR.display(13,
+                  color: accent.withValues(alpha: 0.95), spacing: 1.4)),
         ),
       ],
     );
@@ -192,14 +187,9 @@ class HudActionButton extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Opacity(opacity: ready ? 1 : 0.4, child: glyph),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(trUp(ready ? label : busyLabel),
-                        maxLines: 1,
-                        style: ZR.display(size * 0.19,
-                            color: ready ? color : Colors.white38,
-                            spacing: 0.5)),
-                  ),
+                  Text(ready ? label : busyLabel,
+                      style: ZR.display(size * 0.19,
+                          color: ready ? color : Colors.white38, spacing: 0.5)),
                 ],
               ),
             ),
@@ -404,7 +394,7 @@ class HudSwapPanel extends StatelessWidget {
               child: has
                   ? CustomPaint(painter: HudGunPainter(other!))
                   : Center(
-                      child: Text(trUp('EMPTY'),
+                      child: Text('EMPTY',
                           style: ZR.display(12, color: Colors.white30))),
             ),
             Text(has ? kWeapons[other]!.name.toUpperCase() : '—',
@@ -429,7 +419,7 @@ class HudSwapPanel extends StatelessWidget {
                       color:
                           has ? const Color(0xFF10131A) : Colors.white24),
                   const SizedBox(width: 3),
-                  Text(trUp('SWITCH'),
+                  Text('SWITCH',
                       style: ZR.display(12,
                           color: has
                               ? const Color(0xFF10131A)
@@ -475,7 +465,7 @@ class HudFireMode extends StatelessWidget {
           children: [
             Icon(on ? Icons.flash_on : Icons.filter_center_focus,
                 size: 16, color: on ? ZR.primary : Colors.white70),
-            Text(trUp(!supportsAuto ? 'SINGLE' : (auto ? 'AUTO' : 'SINGLE')),
+            Text(!supportsAuto ? 'SINGLE' : (auto ? 'AUTO' : 'SINGLE'),
                 style: ZR.display(13,
                     color: on ? ZR.primary : Colors.white70, spacing: 0.8)),
           ],
@@ -683,7 +673,7 @@ class HudZoneStrip extends StatelessWidget {
               Icon(closing ? Icons.warning_amber_rounded : Icons.shield_moon,
                   size: 12, color: col),
               const SizedBox(width: 5),
-              Text(trUp(closing ? 'ZONE CLOSING' : 'ZONE SAFE'),
+              Text(closing ? 'ZONE CLOSING' : 'ZONE SAFE',
                   style: ZR.display(14, color: col, spacing: 1.2)),
               const SizedBox(width: 6),
               Text(time, style: ZR.display(14, color: Colors.white)),
@@ -749,7 +739,7 @@ class HudStreakBanner extends StatelessWidget {
                       spreadRadius: -6)
                 ],
               ),
-              child: Text(trUp(title),
+              child: Text(title,
                   textAlign: TextAlign.center,
                   style: ZR.display(34, color: ZR.primary, spacing: 4)),
             ),
@@ -788,22 +778,24 @@ class HudKillFeedLine extends StatelessWidget {
     final col = mine ? ZR.primary : Colors.white70;
     return Opacity(
       opacity: alpha.clamp(0.0, 1.0),
-      // A rounded box cannot take a border with one coloured side: Flutter
-      // asserts and abandons painting the rest of the surrounding stack. The
-      // accent is a clipped strip inside the pill instead.
       child: Container(
         margin: const EdgeInsets.only(bottom: 4),
-        clipBehavior: Clip.antiAlias,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(6),
         ),
-        child: IntrinsicHeight(
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(width: 2, color: mine ? ZR.primary : Colors.white24),
-            const SizedBox(width: 6),
-            Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 3),
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          gradient: LinearGradient(
+            colors: [
+              mine ? ZR.primary : Colors.white24,
+              mine ? ZR.primary : Colors.white24,
+              const Color(0x00000000),
+            ],
+            stops: const [0.0, 0.02, 0.02],
+          ),
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -814,10 +806,6 @@ class HudKillFeedLine extends StatelessWidget {
             Text(victim,
                 style: ZR.display(13, color: Colors.white38, spacing: 0.5)),
           ],
-        ),
-            ),
-            const SizedBox(width: 6),
-          ]),
         ),
       ),
     );

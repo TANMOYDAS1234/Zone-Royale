@@ -7,7 +7,6 @@ import '../game/royale_game.dart';
 import '../game/sfx.dart';
 import 'shell.dart';
 import 'theme.dart';
-import '../i18n/strings.dart';
 
 /// DAILY MISSIONS / INTEL.
 ///
@@ -123,7 +122,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(trUp('DAILY MISSIONS'), style: ZR.display(28, spacing: 1.4)),
+              Text('DAILY MISSIONS', style: ZR.display(28, spacing: 1.4)),
               Text(
                   'COMPLETE OBJECTIVES TO EARN TACTICAL REWARDS  ·  $done/$total DONE',
                   style: ZR.mono(9, color: Colors.white38, spacing: 0.8)),
@@ -137,7 +136,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(trUp('NEXT ROTATION'),
+              Text('NEXT ROTATION',
                   style: ZR.mono(8, color: Colors.white38, spacing: 1)),
               Text(_untilRotation, style: ZR.display(20, spacing: 1)),
             ],
@@ -191,7 +190,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(trUp(m.desc),
+                Text(m.desc.toUpperCase(),
                     style: ZR.display(19,
                         color: m.claimed ? Colors.white38 : Colors.white,
                         spacing: 0.8)),

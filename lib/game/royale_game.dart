@@ -1657,7 +1657,6 @@ class RoyaleGame extends FlameGame {
       // Stop simulating. The win branch already did this; the death branch did
       // not, so after being eliminated the bots kept fighting underneath the
       // results card and you carried on hearing gunfire over your own summary.
-      // SPECTATE turns it back on deliberately.
       playing = false;
       resultWon = false;
       resultPlacement = player.placement;

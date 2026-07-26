@@ -3,7 +3,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'theme.dart';
-import '../i18n/strings.dart';
 
 /// Geometry of the ZONE ROYALE mark, in a -0.5..0.5 unit square.
 ///
@@ -194,7 +193,7 @@ class ZrLogo extends StatelessWidget {
           // Italic condensed caps with a warm glow — the wordmark from the kit.
           Transform(
             transform: Matrix4.skewX(-0.16),
-            child: Text(trUp('ZONE ROYALE'),
+            child: Text('ZONE ROYALE',
                 style: ZR.display(height * 0.9,
                         color: ZR.primaryLite, spacing: 1.5)
                     .copyWith(shadows: [
@@ -230,7 +229,7 @@ class ZrLogoPlate extends StatelessWidget {
             height: size * 0.58,
             child: const CustomPaint(painter: ZrEmblemPainter()),
           ),
-          Text(trUp('ZONE ROYALE'),
+          Text('ZONE ROYALE',
               style: ZR.display(size * 0.125, color: ZR.primary, spacing: 0.5)),
           SizedBox(height: size * 0.05),
         ],

@@ -39,27 +39,24 @@ Future<Uint8List?> captureBoundary(GlobalKey key,
   return null;
 }
 
-/// A card that has already been captured and written to disk, ready to hand
-/// straight to the share sheet.
+/// A card captured ahead of time and already written to disk.
 ///
 /// Encoding a PNG and writing it takes a few hundred milliseconds. Doing that
-/// AFTER the tap is why sharing felt broken — you press the button and nothing
-/// happens for a beat. So the results screen pre-warms it the moment it
-/// appears: by the time anyone reaches for SHARE the file is already there and
-/// the sheet opens instantly.
+/// AFTER the tap is why sharing felt broken — you press SHARE and nothing
+/// happens for a beat. The results screen pre-warms it on open, so by the time
+/// anyone reaches for the button the file exists and the sheet opens at once.
 class _PrewarmedCard {
   String? path;
-  Object? key; // which card this belongs to
+  Object? key;
   Future<void>? inFlight;
 }
 
 final _PrewarmedCard _prewarm = _PrewarmedCard();
 
-/// Capture [cardKey] in the background and keep the file for [shareCard].
-/// Safe to call repeatedly; only the first call for a given [token] works.
 void prewarmShareCard(GlobalKey cardKey,
     {required Object token, String fileStem = 'zone_royale'}) {
-  if (_prewarm.key == token && (_prewarm.path != null || _prewarm.inFlight != null)) {
+  if (_prewarm.key == token &&
+      (_prewarm.path != null || _prewarm.inFlight != null)) {
     return;
   }
   _prewarm
@@ -67,7 +64,6 @@ void prewarmShareCard(GlobalKey cardKey,
     ..path = null;
   _prewarm.inFlight = () async {
     try {
-      // give the screen a moment to settle so we capture the finished card
       await Future<void>.delayed(const Duration(milliseconds: 260));
       final png = await captureBoundary(cardKey, attempts: 3);
       if (png == null) return;
@@ -113,17 +109,13 @@ Future<void> shareCard(
       ? box.localToGlobal(Offset.zero) & box.size
       : const Rect.fromLTWH(0, 0, 1, 1);
 
-  // The fast path: the screen pre-warmed this card, so there is nothing to do
-  // but open the sheet.
+  // The fast path: the screen already encoded this card.
   var path = _prewarm.path;
   if (path == null && _prewarm.inFlight != null) {
-    // capture started but hasn't landed — wait for it rather than starting a
-    // second, competing capture
     say('Preparing your result card…', seconds: 1);
     await _prewarm.inFlight;
     path = _prewarm.path;
   }
-
   if (path == null) {
     say('Preparing your result card…', seconds: 1);
     Uint8List? png;

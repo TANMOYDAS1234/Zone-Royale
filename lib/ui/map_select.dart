@@ -282,6 +282,8 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
                 GestureDetector(
                   onTap: () => setState(() {
         Sfx.select();
+                  Sfx.tap();
+                    Sfx.tap();
                     p.difficulty = i;
                     p.save();
                   }),
@@ -344,6 +346,9 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
                       child: GestureDetector(
                         onTap: () => setState(() {
         Sfx.select();
+                  Sfx.tap();
+                          Sfx.tap();
+                    Sfx.tap();
                           p.matchMode = i;
                           p.save();
                         }),
@@ -375,6 +380,7 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
               GestureDetector(
                 onTap: () => setState(() {
         Sfx.select();
+                  Sfx.tap();
                   p.mapChoice = 0;
                   p.save();
                 }),

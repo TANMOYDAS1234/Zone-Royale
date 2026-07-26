@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../game/sfx.dart';
-import '../i18n/strings.dart';
 
 /// ZONE ROYALE design system — one place for every colour, type style and
 /// surface treatment in the app. Screens compose from here instead of
@@ -37,14 +36,10 @@ class ZR {
           {Color color = Colors.white, double spacing = 1.5, double? height}) =>
       TextStyle(
         fontFamily: 'Display',
-        // Indic scripts fall back to a bundled Noto face; without this the
-        // whole UI renders as empty boxes in Bengali and Hindi.
-        fontFamilyFallback: L.fallback,
         fontSize: size,
         color: color,
-        // caps-tuned tracking looks wrong on scripts that have no case
-        letterSpacing: L.isLatin ? spacing : spacing * 0.3,
-        height: height == null && !L.isLatin ? L.heightBoost : height,
+        letterSpacing: spacing,
+        height: height,
       );
 
   static TextStyle body(double size,
@@ -54,12 +49,11 @@ class ZR {
           double? height}) =>
       TextStyle(
         fontFamily: 'Body',
-        fontFamilyFallback: L.fallback,
         fontSize: size,
         color: color,
         fontWeight: weight,
-        letterSpacing: L.isLatin ? spacing : spacing * 0.3,
-        height: height == null && !L.isLatin ? L.heightBoost : height,
+        letterSpacing: spacing,
+        height: height,
       );
 
   /// Tactical readouts: codes, coordinates, pings, labels.
@@ -69,12 +63,10 @@ class ZR {
           double spacing = 1}) =>
       TextStyle(
         fontFamily: 'Mono',
-        fontFamilyFallback: L.fallback,
         fontSize: size,
         color: color,
         fontWeight: weight,
-        letterSpacing: L.isLatin ? spacing : spacing * 0.3,
-        height: L.isLatin ? null : L.heightBoost,
+        letterSpacing: spacing,
       );
 
   // ---------------- surfaces ----------------
@@ -298,18 +290,11 @@ class _ZrButtonState extends State<ZrButton> {
                     color: enabled ? const Color(0xFF10131A) : Colors.white30),
                 const SizedBox(width: 10),
               ],
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(trUp(widget.label),
-                      maxLines: 1,
-                      style: ZR.display(widget.fontSize,
-                          color: enabled
-                              ? const Color(0xFF10131A)
-                              : Colors.white30,
-                          spacing: 2)),
-                ),
-              ),
+              Text(widget.label,
+                  style: ZR.display(widget.fontSize,
+                      color:
+                          enabled ? const Color(0xFF10131A) : Colors.white30,
+                      spacing: 2)),
             ],
           ),
         ),
@@ -360,14 +345,8 @@ class ZrGhostButton extends StatelessWidget {
               Icon(icon, size: 17, color: color),
               const SizedBox(width: 9),
             ],
-            Flexible(
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(trUp(label),
-                    maxLines: 1,
-                    style: ZR.display(16, color: color, spacing: 1.6)),
-              ),
-            ),
+            Text(label,
+                style: ZR.display(16, color: color, spacing: 1.6)),
           ],
         ),
       ),
@@ -387,7 +366,7 @@ class ZrSectionLabel extends StatelessWidget {
       children: [
         Container(width: 3, height: 14, color: color),
         const SizedBox(width: 8),
-        Text(trUp(text),
+        Text(text.toUpperCase(),
             style: ZR.mono(11, color: Colors.white70, spacing: 2)),
       ],
     );

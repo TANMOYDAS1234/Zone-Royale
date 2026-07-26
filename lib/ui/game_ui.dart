@@ -14,8 +14,6 @@ import 'capture.dart';
 import 'hud_controls.dart';
 import 'result_screen.dart';
 import 'theme.dart';
-import 'tutorial.dart';
-import '../i18n/strings.dart';
 
 /// Page padding that keeps menu content in a readable centred column instead
 /// of stretching one thin list across a 20:9 landscape screen.
@@ -1101,7 +1099,7 @@ Widget metaHeader(BuildContext context, {String subtitle = 'OPERATIONS HUB'}) {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(trUp('ZONE ROYALE'),
+            const Text('ZONE ROYALE',
                 style: TextStyle(
                     color: kAccent,
                     fontSize: 20,
@@ -1314,8 +1312,7 @@ class _StartOverlayState extends State<StartOverlay> {
     final unit = kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name.toUpperCase();
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      // same rule as everywhere else: a mixed-colour border and a corner
-      // radius cannot coexist, so the amber edge is a foreground strip
+      // same rule: a mixed-colour border and a corner radius cannot coexist
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.04),
         borderRadius: BorderRadius.circular(16),
@@ -1443,7 +1440,7 @@ class _StartOverlayState extends State<StartOverlay> {
               right: 12,
               child: Row(
                 children: [
-                  Text(trUp('STATUS: READY'),
+                  Text('STATUS: READY',
                       style: TextStyle(
                           color: kSafeEdge.withValues(alpha: 0.9),
                           fontSize: 10,
@@ -1542,7 +1539,7 @@ class _StartOverlayState extends State<StartOverlay> {
     final p = Profile.instance;
     return Column(
       children: [
-        Text(trUp('DIFFICULTY'),
+        const Text('DIFFICULTY',
             style: TextStyle(
                 fontSize: 11,
                 letterSpacing: 2,
@@ -1620,7 +1617,7 @@ class _StartOverlayState extends State<StartOverlay> {
 
     return Column(
       children: [
-        Text(trUp('MAP'),
+        const Text('MAP',
             style: TextStyle(
                 fontSize: 11,
                 letterSpacing: 2,
@@ -1755,39 +1752,30 @@ class EndOverlay extends StatelessWidget {
       actions: [
         Expanded(
           flex: 2,
-          child: TutorialAnchor(
-            id: 'end.again',
-            child: ZrButton(
-                label: 'PLAY AGAIN',
-                icon: Icons.replay,
-                height: 46,
-                fontSize: 20,
-                onTap: game.startMatch),
-          ),
+          child: ZrButton(
+              label: 'PLAY AGAIN',
+              icon: Icons.replay,
+              height: 46,
+              fontSize: 20,
+              onTap: game.startMatch),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: TutorialAnchor(
-            id: 'end.share',
-            child: ZrGhostButton(
-                label: 'SHARE',
-                icon: Icons.ios_share,
-                height: 46,
-                color: ZR.secondary,
-                onTap: () => _shareShot(context)),
-          ),
+          child: ZrGhostButton(
+              label: 'SHARE',
+              icon: Icons.ios_share,
+              height: 46,
+              color: ZR.secondary,
+              onTap: () => _shareShot(context)),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: TutorialAnchor(
-            id: 'end.home',
-            child: ZrGhostButton(
-                label: 'HOME',
-                icon: Icons.home_rounded,
-                height: 46,
-                color: Colors.white54,
-                onTap: game.goHome),
-          ),
+          child: ZrGhostButton(
+              label: 'HOME',
+              icon: Icons.home_rounded,
+              height: 46,
+              color: Colors.white54,
+              onTap: game.goHome),
         ),
         if (!won && game.aliveCount > 1) ...[
           const SizedBox(width: 10),
@@ -2600,7 +2588,7 @@ class _MissionsOverlayState extends State<MissionsOverlay> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(trUp('DAILY MISSIONS'),
+                const Text('DAILY MISSIONS',
                     style: TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.w900,
@@ -2873,7 +2861,7 @@ class _ShopOverlayState extends State<ShopOverlay> {
             padding: headerPad(context, top: 6, bottom: 8),
             child: Row(
               children: [
-                Text(trUp('ARMORY'),
+                const Text('ARMORY',
                     style: TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.w900,

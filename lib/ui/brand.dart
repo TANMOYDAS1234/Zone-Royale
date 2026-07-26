@@ -326,15 +326,15 @@ class _SplashScreenState extends State<SplashScreen>
                     opacity: _seg(0.5, 0.75),
                     child: Container(
                       padding: const EdgeInsets.fromLTRB(10, 8, 18, 8),
-                      // A rounded box cannot carry a border with different
-                      // colours per side — Flutter aborts painting the rest of
-                      // the surrounding stack when it tries. The amber edge is
-                      // drawn as its own clipped strip instead.
                       decoration: BoxDecoration(
                         color: ZR.surface.withValues(alpha: 0.9),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: ZR.line),
                       ),
+                      // The amber edge is a foreground strip: a border with
+                      // different colours per side cannot coexist with a
+                      // corner radius, and Flutter abandons painting the rest
+                      // of the surrounding stack when it hits one.
                       foregroundDecoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
                         gradient: const LinearGradient(
