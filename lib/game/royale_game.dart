@@ -2685,6 +2685,44 @@ class RoyaleGame extends FlameGame {
       final moving = c.vel.length2 > 40;
       final moveAim = moving ? angleOf(c.vel) : c.aim;
       final walk = moving ? math.sin(_time * 11 + c.id * 1.7) : 0.0;
+      // The evolved aura belongs in the match too — the whole point of buying
+      // a top form is that other players see it. Same live light as the
+      // lobby: it breathes, the rim sweeps, embers lift off.
+      final evolved = c == player &&
+          Profile.instance.wearEvolved &&
+          Profile.instance.owns('e${Profile.instance.hero}');
+      if (evolved && _q.bloom > 0) {
+        final beat = 0.80 +
+            0.20 * math.sin(_time * 1.55) +
+            0.07 * math.sin(_time * 4.1 + 0.6);
+        for (final pass in const [
+          [1.55, 0.11, 20.0],
+          [1.25, 0.15, 11.0],
+          [1.06, 0.20, 5.0],
+        ]) {
+          canvas.drawCircle(
+              pos,
+              r * pass[0] * (0.97 + 0.05 * beat),
+              Paint()
+                ..maskFilter = MaskFilter.blur(
+                    BlurStyle.normal, pass[2] * (0.85 + 0.3 * beat))
+                ..color = const Color(0xFFFFC24B)
+                    .withValues(alpha: pass[1] * (0.7 + 0.55 * beat)));
+        }
+        for (var i = 0; i < 6; i++) {
+          final phase = ((_time * 0.42) + i / 6.0) % 1.0;
+          final a = c.aim - 1.2 + i * 0.48 + math.sin(_time * 0.7 + i) * 0.12;
+          final d = r * (1.05 + phase * 0.7);
+          canvas.drawCircle(
+              pos + Offset(math.cos(a), math.sin(a)) * d - Offset(0, r * phase * 0.6),
+              r * (0.05 - phase * 0.025),
+              Paint()
+                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3)
+                ..color = const Color(0xFFFFE9A8)
+                    .withValues(alpha: (1 - phase) * 0.7));
+        }
+      }
+
       drawOperator(canvas, pos, r, c.aim, moveAim, c.color, c.skin, c.accessory,
           c.weaponId,
           fill: _fill,

@@ -1446,6 +1446,9 @@ void drawOperatorTile(
   /// Draw the hero's evolved form: a gold aura and a rim of light. An
   /// evolution you cannot see is an evolution nobody buys twice.
   bool evolved = false,
+  /// Seconds, for anything that moves. Light that never changes reads as a
+  /// picture of light; a slow breath and drifting embers read as a source.
+  double time = 0,
 }) {
   final fill = Paint()..style = PaintingStyle.fill;
   final stroke = Paint()..style = PaintingStyle.stroke;
@@ -1480,24 +1483,38 @@ void drawOperatorTile(
   canvas.save();
   canvas.translate(centre.dx + r * 0.28, centre.dy + r * 0.85);
   canvas.rotate(turn);
+  // An evolved operator is lit from their own aura, so their shadow tightens
+  // and darkens on the beat instead of sitting there unchanged.
+  final lit = evolved
+      ? 0.80 + 0.20 * math.sin(time * 1.55) + 0.07 * math.sin(time * 4.1 + 0.6)
+      : 0.0;
   canvas.drawOval(
-      Rect.fromCenter(center: Offset.zero, width: r * 2.3, height: r * 0.9),
-      fill..color = const Color(0x55000000));
+      Rect.fromCenter(
+          center: Offset.zero,
+          width: r * 2.3 * (1 - 0.08 * lit),
+          height: r * 0.9 * (1 - 0.08 * lit)),
+      fill..color = Color(0x55000000).withValues(alpha: 0.33 + 0.10 * lit));
   canvas.restore();
 
   // evolved: a warm ground aura under the operator, before they are drawn
   if (evolved) {
+    // one slow breath, plus a faster shimmer, so it never looks looped
+    final breath = 0.82 +
+        0.18 * math.sin(time * 1.35) +
+        0.05 * math.sin(time * 3.7 + 1.1);
     canvas.drawCircle(
         centre,
-        r * 1.5,
+        r * 1.75 * (0.94 + 0.10 * breath),
         fill
-          ..shader = Gradient.radial(centre, r * 1.5, [
-            const Color(0x66FFD36B),
-            const Color(0x22FFB02E),
+          ..shader = Gradient.radial(centre, r * 1.75 * (0.94 + 0.10 * breath), [
+            const Color(0x3DFFD36B),
+            const Color(0x1FFFB02E),
+            const Color(0x0AFF8A00),
             const Color(0x00000000),
           ], [
             0.0,
-            0.55,
+            0.42,
+            0.72,
             1.0
           ]));
     fill.shader = null;
@@ -1513,20 +1530,66 @@ void drawOperatorTile(
       vest: vest,
       helmet: helmet);
 
-  // evolved: a bright rim around the silhouette and a pair of crest marks
+  // Evolved: golden LIGHT, not a drawn ring.
+  //
+  // A hard stroke reads as a sticker someone put behind the character. Light
+  // reads as something the character is emitting: three blurred passes of
+  // decreasing radius and increasing brightness, so it falls off the way real
+  // glow does, plus a warm rim along the lit edge and a few embers drifting
+  // off the shoulders.
   if (evolved) {
-    canvas.drawCircle(
-        centre,
-        r * 1.06,
-        stroke
-          ..color = const Color(0xFFFFD36B).withValues(alpha: 0.85)
-          ..strokeWidth = r * 0.055);
-    for (final sgn in const [-1.0, 1.0]) {
-      final a = face + sgn * 0.85;
+    // Tuned down from the first pass: the glow has to say "this one is
+    // special" without bleaching out the character it is lighting.
+    final beat = 0.80 +
+        0.20 * math.sin(time * 1.55) +
+        0.07 * math.sin(time * 4.1 + 0.6);
+    for (final pass in const [
+      [1.38, 0.10, 24.0],
+      [1.18, 0.14, 13.0],
+      [1.04, 0.20, 6.0],
+    ]) {
       canvas.drawCircle(
-          centre + Offset(math.cos(a), math.sin(a)) * (r * 1.06),
-          r * 0.11,
-          fill..color = const Color(0xFFFFD36B));
+          centre,
+          r * pass[0] * (0.97 + 0.05 * beat),
+          Paint()
+            ..maskFilter = MaskFilter.blur(BlurStyle.normal, pass[2] * (0.85 + 0.3 * beat))
+            ..color = const Color(0xFFFFC24B)
+                .withValues(alpha: pass[1] * (0.7 + 0.55 * beat)));
+    }
+    // rim light on the side the map's light comes from (up-left)
+    canvas.save();
+    canvas.translate(centre.dx, centre.dy);
+    canvas.rotate(-2.35 + 0.22 * math.sin(time * 0.9));
+    canvas.drawArc(
+        Rect.fromCircle(center: Offset.zero, radius: r * 1.01),
+        -0.9,
+        1.8,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = r * 0.075
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.09)
+          ..color = const Color(0xFFFFF0C4)
+              .withValues(alpha: 0.35 + 0.30 * beat));
+    canvas.restore();
+    // embers lifting off, so the aura has motion even in a still frame
+    // Embers lift off the shoulders, fade as they climb, and start again.
+    // Each is on its own phase so they never march in step.
+    for (var i = 0; i < 7; i++) {
+      final phase = ((time * 0.42) + i / 7.0) % 1.0;
+      final a = face - 1.2 + i * 0.42 + math.sin(time * 0.7 + i) * 0.12;
+      final d = r * (1.02 + phase * 0.62);
+      final p = centre +
+          Offset(math.cos(a), math.sin(a)) * d -
+          Offset(0, r * phase * 0.55); // and drift upward
+      canvas.drawCircle(
+          p,
+          r * (0.045 - phase * 0.022),
+          Paint()
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3)
+            ..color = const Color(0xFFFFE9A8)
+                .withValues(alpha: (1 - phase) * 0.7));
     }
   }
   canvas.restore();

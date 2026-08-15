@@ -312,7 +312,7 @@ class _NavButton extends StatelessWidget {
 
 /// The framed operator card used on HOME and PROFILE: the live in-game
 /// operator on a lit stage, with tactical read-outs stencilled over it.
-class ZrOperatorStage extends StatelessWidget {
+class ZrOperatorStage extends StatefulWidget {
   final double height;
   final bool showReadouts;
   /// Radians the operator has been spun by dragging, in the lobby.
@@ -324,11 +324,30 @@ class ZrOperatorStage extends StatelessWidget {
       this.turn = 0});
 
   @override
+  State<ZrOperatorStage> createState() => _ZrOperatorStageState();
+}
+
+class _ZrOperatorStageState extends State<ZrOperatorStage>
+    with SingleTickerProviderStateMixin {
+  /// Drives the evolved aura. Light that never changes reads as a picture of
+  /// light — this is what makes it look like a source.
+  late final AnimationController _clock = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 20),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _clock.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final p = Profile.instance;
     final hero = kHeroes[p.hero.clamp(0, kHeroes.length - 1)];
     return Container(
-      height: height,
+      height: widget.height,
       decoration: ZR.panel(border: ZR.primary.withValues(alpha: 0.3), radius: 16),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -339,7 +358,9 @@ class ZrOperatorStage extends StatelessWidget {
           // the real in-game operator, lit and framed
           Padding(
             padding: const EdgeInsets.fromLTRB(0, 18, 0, 34),
-            child: CustomPaint(
+            child: AnimatedBuilder(
+              animation: _clock,
+              builder: (_, _) => CustomPaint(
               painter: OperatorStagePainter(
                 outfit: p.outfitColor,
                 skin: p.skinColor,
@@ -347,12 +368,14 @@ class ZrOperatorStage extends StatelessWidget {
                 weapon: p.startWeapon,
                 hero: p.hero,
                 accent: Color(hero.color),
-                turn: turn,
+                turn: widget.turn,
                 evolved: p.wearEvolved && p.owns('e${p.hero}'),
+                time: _clock.value * 20,
               ),
             ),
+            ),
           ),
-          if (showReadouts) ...[
+          if (widget.showReadouts) ...[
             Positioned(
               left: 12,
               top: 12,
@@ -472,6 +495,8 @@ class OperatorStagePainter extends CustomPainter {
   final double turn;
   /// Whether the hero's evolved form is worn.
   final bool evolved;
+  /// Seconds, for the live aura.
+  final double time;
   OperatorStagePainter({
     required this.outfit,
     required this.skin,
@@ -481,6 +506,7 @@ class OperatorStagePainter extends CustomPainter {
     required this.accent,
     this.turn = 0,
     this.evolved = false,
+    this.time = 0,
   });
 
   @override
@@ -500,11 +526,13 @@ class OperatorStagePainter extends CustomPainter {
         vest: true,
         helmet: true,
         evolved: evolved,
+        time: time,
         zoom: 0.9);
   }
 
   @override
   bool shouldRepaint(covariant OperatorStagePainter old) =>
+      old.time != time ||
       old.turn != turn ||
       old.evolved != evolved ||
       old.outfit != outfit ||

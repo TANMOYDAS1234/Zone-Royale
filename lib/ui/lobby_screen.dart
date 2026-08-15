@@ -10,6 +10,7 @@ import '../net/net_arena.dart';
 import 'map_select.dart';
 import 'shell.dart';
 import 'theme.dart';
+import 'tutorial.dart';
 
 /// THE LOBBY — the first thing anyone sees.
 ///
@@ -74,9 +75,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SizedBox(width: 88, child: _leftRail()),
+                      SizedBox(
+                          width: 88,
+                          child: TutorialAnchor(
+                              id: 'lobby.rail', child: _leftRail())),
                       const SizedBox(width: 10),
-                      Expanded(child: _stage()),
+                      Expanded(
+                          child: TutorialAnchor(
+                              id: 'lobby.stage', child: _stage())),
                       const SizedBox(width: 10),
                       SizedBox(width: 210, child: _deployPanel()),
                     ],
@@ -101,7 +107,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
           // beside your name, and the level bar underneath. Tapping it opens
           // the profile — a card showing who you are should take you to where
           // you change who you are.
-          GestureDetector(
+          TutorialAnchor(
+            id: 'lobby.player',
+            child: GestureDetector(
             onTap: () => _go(Screen.profile),
             behavior: HitTestBehavior.opaque,
             child: Container(
@@ -189,8 +197,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ),
+          ),
           const SizedBox(width: 8),
-          _currency(Icons.monetization_on, '${p.coins}', ZR.primary),
+          TutorialAnchor(
+            id: 'lobby.coins',
+            child: _currency(Icons.monetization_on, '${p.coins}', ZR.primary),
+          ),
           const Spacer(),
           // the icon rail everyone expects along the top right
           // One panel, three equal cells, hairline dividers. Three floating
@@ -201,8 +213,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
             decoration: ZR.panel(radius: 12),
             child: Row(
               children: [
-                _topIcon(Icons.mail_outline, 'MAIL', _inbox,
-                    badge: Profile.instance.streakReady),
+                TutorialAnchor(
+                  id: 'lobby.mail',
+                  child: _topIcon(Icons.mail_outline, 'MAIL', _inbox,
+                      badge: Profile.instance.streakReady),
+                ),
                 _divider(),
                 _topIcon(Icons.local_activity_outlined, 'EVENTS',
                     () => _go(Screen.missions)),
@@ -590,23 +605,27 @@ class _LobbyScreenState extends State<LobbyScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // mode chips
-        SizedBox(
-          height: 30,
-          child: Row(
-            children: [
-              for (var i = 0; i < kMatchModes.length; i++) ...[
-                if (i > 0) const SizedBox(width: 5),
-                Expanded(child: _modeChip(i)),
+        TutorialAnchor(
+          id: 'lobby.mode',
+          child: SizedBox(
+            height: 30,
+            child: Row(
+              children: [
+                for (var i = 0; i < kMatchModes.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 5),
+                  Expanded(child: _modeChip(i)),
+                ],
               ],
-            ],
+            ),
           ),
         ),
         const SizedBox(height: 7),
         // map card — tap to open the full map intel screen
-        Expanded(child: _mapCard()),
+        Expanded(
+            child: TutorialAnchor(id: 'lobby.map', child: _mapCard())),
         const SizedBox(height: 7),
         // the button this whole screen exists for
-        _startButton(),
+        TutorialAnchor(id: 'lobby.start', child: _startButton()),
         const SizedBox(height: 6),
         SizedBox(
           height: 34,
