@@ -10,7 +10,8 @@ import 'game/royale_game.dart';
 import 'game/sfx.dart';
 import 'ui/brand.dart';
 import 'ui/game_ui.dart';
-import 'ui/home_screen.dart';
+
+import 'ui/lobby_screen.dart';
 import 'ui/missions_screen.dart';
 import 'ui/profile_screen.dart';
 import 'ui/shop_screen.dart';
@@ -235,7 +236,7 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                   builder: (_, _) {
                     switch (game.screen.value) {
                       case Screen.start:
-                        return HomeScreen(game: game);
+                        return LobbyScreen(game: game);
                       case Screen.end:
                         return EndOverlay(game: game);
                       case Screen.profile:
