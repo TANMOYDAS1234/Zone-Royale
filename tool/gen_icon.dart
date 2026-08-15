@@ -16,31 +16,26 @@ const int kSamples = 3; // supersampling per axis (3x3 = 9 samples/pixel)
 double _clamp01(double v) => v < 0 ? 0 : (v > 1 ? 1 : v);
 double _lerp(double a, double b, double t) => a + (b - a) * t;
 
+// (The crosshair-ring and star constants the old outlined mark used are
+// gone; the mark is a filled shield with a Z cut out of it now.)
+
 /// Everything is expressed in "unit" space: the emblem lives in -0.5..0.5 on
 /// both axes — the same geometry as `ZrMark` in lib/ui/logo.dart.
 const List<List<double>> _shield = [
-  [-0.34, -0.40],
-  [0.34, -0.40],
-  [0.34, -0.02],
-  [0.31, 0.12],
-  [0.24, 0.25],
-  [0.13, 0.37],
-  [0.0, 0.46],
-  [-0.13, 0.37],
-  [-0.24, 0.25],
-  [-0.31, 0.12],
-  [-0.34, -0.02],
+  [-0.35, -0.40],
+  [0.35, -0.40],
+  [0.35, 0.02],
+  [0.31, 0.16],
+  [0.23, 0.28],
+  [0.12, 0.37],
+  [0.0, 0.43],
+  [-0.12, 0.37],
+  [-0.23, 0.28],
+  [-0.31, 0.16],
+  [-0.35, 0.02],
 ];
-const double _stroke = 0.055;
-const double _ringCy = -0.03;
-const double _ringR = 0.185;
-const double _ringStroke = 0.05;
-const double _tickIn = 0.10;
-const double _tickOut = 0.30;
-const double _starLong = 0.10;
-const double _starShort = 0.032;
-const double _notchW = 0.085;
-const double _notchH = 0.13;
+const double _notchW = 0.075;
+const double _notchH = 0.10;
 const double _notchX = 0.115;
 
 /// Distance from (px,py) to the segment (ax,ay)-(bx,by).
@@ -56,52 +51,67 @@ double _segDist(
   return math.sqrt(dx * dx + dy * dy);
 }
 
-bool _inEmblem(double x, double y) {
-  final half = _stroke / 2;
-
-  // ---- shield outline (closed polyline), minus the ribbon notches ----
-  var onShield = false;
-  for (var i = 0; i < _shield.length; i++) {
-    final a = _shield[i];
-    final b = _shield[(i + 1) % _shield.length];
-    if (_segDist(x, y, a[0], a[1], b[0], b[1]) <= half) {
-      onShield = true;
-      break;
+/// Point-in-polygon for the shield outline.
+bool _inShield(double x, double y) {
+  var inside = false;
+  for (var i = 0, j = _shield.length - 1; i < _shield.length; j = i++) {
+    final xi = _shield[i][0], yi = _shield[i][1];
+    final xj = _shield[j][0], yj = _shield[j][1];
+    if ((yi > y) != (yj > y) &&
+        x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+      inside = !inside;
     }
   }
-  if (onShield) {
-    final inNotch = y <= -0.40 + _notchH &&
-        ((x >= _notchX && x <= _notchX + _notchW) ||
-            (x <= -_notchX && x >= -_notchX - _notchW));
-    if (!inNotch) return true;
+  return inside;
+}
+
+// The Z, as three thick strokes. Z for Zone — a letterform is the single most
+// recognisable thing you can put in a small icon, and it survives being shrunk
+// to a 48px launcher tile in a way a fine crosshair never does.
+const double _zHalf = 0.046; // half thickness
+const List<List<double>> _zStrokes = [
+  [-0.165, -0.185, 0.165, -0.185], // top bar
+  [0.165, -0.185, -0.165, 0.165], // diagonal
+  [-0.165, 0.165, 0.165, 0.165], // bottom bar
+];
+
+bool _inZ(double x, double y) {
+  for (final st in _zStrokes) {
+    if (_segDist(x, y, st[0], st[1], st[2], st[3]) <= _zHalf) return true;
   }
-  // notch uprights
-  if (y >= -0.40 && y <= -0.40 + _notchH &&
-      (x - _notchX).abs() <= half * 0.9) {
-    return true;
-  }
-  if (y >= -0.40 && y <= -0.40 + _notchH &&
-      (x + _notchX).abs() <= half * 0.9) {
-    return true;
-  }
-
-  final dy = y - _ringCy;
-  final d = math.sqrt(x * x + dy * dy);
-
-  // ---- crosshair ring ----
-  if ((d - _ringR).abs() <= _ringStroke / 2) return true;
-
-  // ---- cardinal ticks ----
-  final rh = _ringStroke / 2;
-  if (dy.abs() <= rh && x.abs() >= _tickIn && x.abs() <= _tickOut) return true;
-  if (x.abs() <= rh && dy.abs() >= _tickIn && dy.abs() <= _tickOut) return true;
-
-  // ---- four-point star (union of a tall and a wide diamond) ----
-  if (x.abs() / _starShort + dy.abs() / _starLong <= 1) return true;
-  if (x.abs() / _starLong + dy.abs() / _starShort <= 1) return true;
-
   return false;
 }
+
+/// The mark: a SOLID shield with the Z cut out of it, two scope ticks either
+/// side, and the ribbon notches along the top.
+///
+/// The old mark was an outlined shield holding a crosshair ring and a star —
+/// four separate thin shapes, which turns to mush at launcher size. A filled
+/// silhouette with one bold letter knocked through it reads at any scale.
+bool _inEmblem(double x, double y) {
+  // ribbon notches punched through the top edge
+  final inNotch = y <= -0.40 + _notchH &&
+      y >= -0.42 &&
+      ((x >= _notchX && x <= _notchX + _notchW) ||
+          (x <= -_notchX && x >= -_notchX - _notchW));
+  if (inNotch) return false;
+
+  if (_inShield(x, y)) {
+    // the Z is a hole in the shield, not a shape on top of it
+    return !_inZ(x, y);
+  }
+
+  // two scope ticks flanking the shield, so it still reads as a sight
+  if (y.abs() <= _tickHalf) {
+    final ax = x.abs();
+    if (ax >= _tickNear && ax <= _tickFar) return true;
+  }
+  return false;
+}
+
+const double _tickHalf = 0.020;
+const double _tickNear = 0.385;
+const double _tickFar = 0.455;
 
 /// Rounded-square plate mask (the icon background shape).
 bool _inPlate(double x, double y) {

@@ -13,18 +13,33 @@ class ZrMark {
   /// Outline of the shield, as a closed polyline (curves approximated with
   /// segments so the icon generator can test distance to it cheaply).
   static const List<Offset> shield = [
-    Offset(-0.34, -0.40),
-    Offset(0.34, -0.40),
-    Offset(0.34, -0.02),
-    Offset(0.31, 0.12),
-    Offset(0.24, 0.25),
-    Offset(0.13, 0.37),
-    Offset(0.0, 0.46),
-    Offset(-0.13, 0.37),
-    Offset(-0.24, 0.25),
-    Offset(-0.31, 0.12),
-    Offset(-0.34, -0.02),
+    Offset(-0.35, -0.40),
+    Offset(0.35, -0.40),
+    Offset(0.35, 0.02),
+    Offset(0.31, 0.16),
+    Offset(0.23, 0.28),
+    Offset(0.12, 0.37),
+    Offset(0.0, 0.43),
+    Offset(-0.12, 0.37),
+    Offset(-0.23, 0.28),
+    Offset(-0.31, 0.16),
+    Offset(-0.35, 0.02),
   ];
+
+  /// The Z, as three thick strokes — Z for Zone. A letterform is the most
+  /// recognisable thing you can put in a small icon, and it survives being
+  /// shrunk to a launcher tile in a way a fine crosshair never does.
+  static const double zHalf = 0.046;
+  static const List<List<Offset>> zStrokes = [
+    [Offset(-0.165, -0.185), Offset(0.165, -0.185)],
+    [Offset(0.165, -0.185), Offset(-0.165, 0.165)],
+    [Offset(-0.165, 0.165), Offset(0.165, 0.165)],
+  ];
+
+  /// Scope ticks either side of the shield.
+  static const double tickHalf = 0.020;
+  static const double tickNear = 0.385;
+  static const double tickFar = 0.455;
 
   static const double stroke = 0.055; // outline thickness
   static const Offset ringC = Offset(0, -0.03);
@@ -36,8 +51,8 @@ class ZrMark {
   static const double starShort = 0.032;
 
   /// The two ribbon notches that break the top edge (the "medal" cue).
-  static const double notchW = 0.085;
-  static const double notchH = 0.13;
+  static const double notchW = 0.075;
+  static const double notchH = 0.10;
   static const double notchX = 0.115; // distance from centre to inner edge
 
   static Path shieldPath() {
@@ -70,72 +85,66 @@ class ZrEmblemPainter extends CustomPainter {
     canvas.translate(size.width / 2, size.height / 2);
     canvas.scale(s);
 
-    final line = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = ZrMark.stroke
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round
-      ..color = color;
     final fill = Paint()..color = color;
 
-    // ---- shield outline ----
-    canvas.drawPath(ZrMark.shieldPath(), line);
+    // ---- solid shield with the Z knocked out of it ----
+    //
+    // The old mark was an outlined shield holding a crosshair ring and a
+    // four-point star: four thin shapes that turn to mush at launcher size.
+    // A filled silhouette with one bold letter cut through it reads at any
+    // scale, and it is the same geometry tool/gen_icon.dart bakes into the
+    // launcher icon — so the app and the home screen can never drift apart.
+    final mark = Path()
+      ..fillType = PathFillType.evenOdd
+      ..addPath(ZrMark.shieldPath(), Offset.zero);
 
-    // ---- ribbon notches across the top edge ----
-    final clear = Paint()..blendMode = BlendMode.clear;
-    canvas.saveLayer(const Rect.fromLTRB(-0.6, -0.6, 0.6, 0.6), Paint());
-    canvas.drawPath(ZrMark.shieldPath(), line);
+    // ribbon notches punched through the top edge
+    for (final sgn in const [-1.0, 1.0]) {
+      mark.addRect(Rect.fromLTWH(
+          sgn > 0 ? ZrMark.notchX : -ZrMark.notchX - ZrMark.notchW,
+          -0.41,
+          ZrMark.notchW,
+          ZrMark.notchH + 0.01));
+    }
+
+    // The Z as real capsule geometry — a quad plus round ends per stroke,
+    // unioned. That is exactly the shape tool/gen_icon.dart tests for
+    // (distance-to-segment <= half thickness), so the drawn emblem and the
+    // baked launcher icon are the same mark to the pixel.
+    Path capsule(Offset a, Offset b, double t) {
+      var out = Path()..addOval(Rect.fromCircle(center: a, radius: t));
+      out = Path.combine(PathOperation.union, out,
+          Path()..addOval(Rect.fromCircle(center: b, radius: t)));
+      final d = b - a;
+      final len = d.distance;
+      final n = Offset(-d.dy, d.dx) / len * t;
+      final quad = Path()
+        ..moveTo(a.dx + n.dx, a.dy + n.dy)
+        ..lineTo(b.dx + n.dx, b.dy + n.dy)
+        ..lineTo(b.dx - n.dx, b.dy - n.dy)
+        ..lineTo(a.dx - n.dx, a.dy - n.dy)
+        ..close();
+      return Path.combine(PathOperation.union, out, quad);
+    }
+
+    var z = Path();
+    for (final st in ZrMark.zStrokes) {
+      z = Path.combine(
+          PathOperation.union, z, capsule(st[0], st[1], ZrMark.zHalf));
+    }
+    canvas.drawPath(
+        Path.combine(PathOperation.difference, mark, z), fill);
+
+    // scope ticks flanking the shield, so it still reads as a sight
     for (final sgn in const [-1.0, 1.0]) {
       canvas.drawRect(
-          Rect.fromLTWH(
-              sgn > 0 ? ZrMark.notchX : -ZrMark.notchX - ZrMark.notchW,
-              -0.40 - ZrMark.stroke,
-              ZrMark.notchW,
-              ZrMark.notchH),
-          clear);
+          Rect.fromLTRB(
+              sgn > 0 ? ZrMark.tickNear : -ZrMark.tickFar,
+              -ZrMark.tickHalf,
+              sgn > 0 ? ZrMark.tickFar : -ZrMark.tickNear,
+              ZrMark.tickHalf),
+          fill);
     }
-    canvas.restore();
-    // the notch uprights
-    for (final sgn in const [-1.0, 1.0]) {
-      canvas.drawLine(
-          Offset(sgn * ZrMark.notchX, -0.40),
-          Offset(sgn * ZrMark.notchX, -0.40 + ZrMark.notchH),
-          Paint()
-            ..strokeWidth = ZrMark.stroke * 0.9
-            ..strokeCap = StrokeCap.round
-            ..color = color);
-    }
-
-    // ---- crosshair ring ----
-    canvas.drawCircle(
-        ZrMark.ringC,
-        ZrMark.ringR,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = ZrMark.ringStroke
-          ..color = color);
-    // cardinal ticks
-    final tick = Paint()
-      ..strokeWidth = ZrMark.ringStroke
-      ..strokeCap = StrokeCap.round
-      ..color = color;
-    for (var i = 0; i < 4; i++) {
-      final a = i * math.pi / 2;
-      final d = Offset(math.cos(a), math.sin(a));
-      canvas.drawLine(ZrMark.ringC + d * ZrMark.tickIn,
-          ZrMark.ringC + d * ZrMark.tickOut, tick);
-    }
-
-    // ---- four-point star ----
-    final star = Path();
-    for (var i = 0; i < 8; i++) {
-      final a = -math.pi / 2 + i * math.pi / 4;
-      final r = i.isEven ? ZrMark.starLong : ZrMark.starShort;
-      final p = ZrMark.ringC + Offset(math.cos(a) * r, math.sin(a) * r);
-      i == 0 ? star.moveTo(p.dx, p.dy) : star.lineTo(p.dx, p.dy);
-    }
-    star.close();
-    canvas.drawPath(star, fill);
 
     // ---- optional dashed orbit (splash) ----
     if (showOrbit) {
