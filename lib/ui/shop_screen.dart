@@ -96,6 +96,11 @@ class _ShopScreenState extends State<ShopScreen> {
       case 'h':
         p.hero = n;
         break;
+      case 'e':
+        // An evolution is a hero's top form, so equipping it equips that
+        // hero. Without this case the tile did nothing at all when tapped.
+        p.hero = n;
+        break;
     }
     p.save();
     Sfx.tap();
@@ -380,6 +385,10 @@ class _ShopScreenState extends State<ShopScreen> {
         return p.startWeapon.index == n;
       case 'h':
         return p.hero == n;
+      case 'e':
+        // shown as equipped only when you own the evolution AND that hero is
+        // the one you are actually taking into a match
+        return p.owns(id) && p.hero == n;
       default:
         return false;
     }

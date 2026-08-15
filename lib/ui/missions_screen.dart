@@ -93,7 +93,12 @@ class _MissionsScreenState extends State<MissionsScreen> {
                           const SizedBox(height: 8),
                       ],
                       const SizedBox(height: 10),
-                      _notes(),
+                      // IntrinsicHeight matters: _notes is a Row with
+                      // crossAxisAlignment.stretch, and inside a scroll view
+                      // the cross axis is UNBOUNDED — the row grew to a
+                      // ridiculous height and the page scrolled far past the
+                      // end of its own content.
+                      IntrinsicHeight(child: _notes()),
                       const SizedBox(height: 6),
                     ],
                   ),

@@ -746,8 +746,8 @@ class _AvatarPainter extends CustomPainter {
       accessory: p.accessory,
       hero: p.hero,
       weapon: p.startWeapon,
-      zoom: 1.5,
-      headBias: 0.22,
+      zoom: 1.15,
+      headBias: 0.10,
       vest: true,
       helmet: true,
     );

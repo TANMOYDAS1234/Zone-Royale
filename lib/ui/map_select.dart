@@ -237,7 +237,11 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
                 child: wide
                     ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        // stretch, not start: with start the sidebar was
+                        // given unbounded height, so its scroll view had
+                        // nothing to scroll and TACTICAL OPS just ran off the
+                        // bottom of the screen with no way to reach it
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           SizedBox(width: 230, child: _sidebar(p)),
                           const SizedBox(width: 16),
