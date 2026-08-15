@@ -251,6 +251,8 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                         return MissionsScreen(game: game);
                       case Screen.shop:
                         return ShopScreen(game: game);
+                      case Screen.collection:
+                        return ShopScreen(game: game, ownedOnly: true);
                       default:
                         return HudLayer(game: game);
                     }

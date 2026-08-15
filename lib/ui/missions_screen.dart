@@ -89,10 +89,12 @@ class _MissionsScreenState extends State<MissionsScreen> {
                       const SizedBox(height: 10),
                       for (var i = 0; i < p.missions.length; i++) ...[
                         _missionRow(i, p),
-                        const SizedBox(height: 8),
+                        if (i < p.missions.length - 1)
+                          const SizedBox(height: 8),
                       ],
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 10),
                       _notes(),
+                      const SizedBox(height: 6),
                     ],
                   ),
                 )),

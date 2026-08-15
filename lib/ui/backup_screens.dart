@@ -172,6 +172,23 @@ class _BackupCodeScreenState extends State<_BackupCodeScreen> {
     }
   }
 
+  /// Sends the QR card as an image, with the code in the text as a fallback
+  /// for anyone whose app strips attachments.
+  Future<void> _shareCard(BuildContext context, {bool withImage = true}) async {
+    final f = withImage ? await _cardFile() : null;
+    if (!context.mounted) return;
+    try {
+      await SharePlus.instance.share(ShareParams(
+        files: f == null ? null : [XFile(f.path, mimeType: 'image/png')],
+        text: 'Zone Royale transfer code: $_code\n'
+            'Open Zone Royale > Profile > Restore, and scan or type it.',
+        subject: 'Zone Royale transfer code',
+      ));
+    } catch (_) {
+      if (context.mounted) _toast(context, 'COULD NOT SHARE', color: ZR.danger);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return _page(
@@ -210,7 +227,7 @@ class _BackupCodeScreenState extends State<_BackupCodeScreen> {
             child: RepaintBoundary(
               key: _qrKey,
               child: Container(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
@@ -219,15 +236,15 @@ class _BackupCodeScreenState extends State<_BackupCodeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text('ZONE ROYALE',
-                        style: ZR.display(20,
+                        style: ZR.display(17,
                             color: const Color(0xFF10131A), spacing: 3)),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     // white background on purpose: scanners want maximum
                     // contrast, and a dark QR on a dark card fails often
                     QrImageView(
                       data: CloudCode.payload(_code!),
                       version: QrVersions.auto,
-                      size: 132,
+                      size: 104,
                       backgroundColor: Colors.white,
                       eyeStyle: const QrEyeStyle(
                           eyeShape: QrEyeShape.square,
@@ -240,8 +257,8 @@ class _BackupCodeScreenState extends State<_BackupCodeScreen> {
                     Text(_code!,
                         style: TextStyle(
                           fontFamily: 'Mono',
-                          fontSize: 26,
-                          letterSpacing: 6,
+                          fontSize: 22,
+                          letterSpacing: 5,
                           fontWeight: FontWeight.w700,
                           color: const Color(0xFF10131A),
                         )),
@@ -253,46 +270,46 @@ class _BackupCodeScreenState extends State<_BackupCodeScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: ZrButton(
-                  label: 'SAVE IMAGE',
-                  icon: Icons.download,
-                  height: 44,
-                  fontSize: 18,
-                  onTap: () async {
-                    final f = await _cardFile();
-                    if (!context.mounted) return;
-                    if (f == null) {
-                      _toast(context, 'COULD NOT SAVE', color: ZR.danger);
-                      return;
-                    }
-                    // Android blocks a silent write to the gallery, so the
-                    // share sheet is how the player chooses where it lands.
-                    try {
-                      await SharePlus.instance.share(ShareParams(
-                        files: [XFile(f.path, mimeType: 'image/png')],
-                        text: 'Zone Royale transfer code: $_code',
-                      ));
-                    } catch (_) {}
-                  },
+          const SizedBox(height: 10),
+          // Three actions on one row: the page is 360dp tall in landscape and
+          // stacked full-height buttons pushed the last one off the bottom.
+          SizedBox(
+            height: 42,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ZrButton(
+                    label: 'SHARE QR',
+                    icon: Icons.ios_share,
+                    height: 42,
+                    fontSize: 16,
+                    onTap: () => _shareCard(context, withImage: true),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: ZrGhostButton(
-                  label: 'COPY CODE',
-                  icon: Icons.copy_all,
-                  height: 44,
-                  onTap: () async {
-                    await Clipboard.setData(ClipboardData(text: _code!));
-                    if (context.mounted) _toast(context, 'COPIED');
-                  },
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ZrGhostButton(
+                    label: 'SAVE IMAGE',
+                    icon: Icons.download,
+                    height: 42,
+                    onTap: () => _shareCard(context, withImage: true),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ZrGhostButton(
+                    label: 'COPY CODE',
+                    icon: Icons.copy_all,
+                    height: 42,
+                    color: Colors.white54,
+                    onTap: () async {
+                      await Clipboard.setData(ClipboardData(text: _code!));
+                      if (context.mounted) _toast(context, 'COPIED');
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 10),
           Text(

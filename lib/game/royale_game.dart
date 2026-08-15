@@ -25,6 +25,8 @@ class Screen {
   static const profile = 'profile';
   static const missions = 'missions';
   static const shop = 'shop';
+  /// Same screen as the shop, filtered to what you already own.
+  static const collection = 'collection';
 }
 
 class RoyaleGame extends FlameGame {

@@ -302,12 +302,23 @@ class _ZrScrollBehaviour extends ScrollBehavior {
   @override
   Widget buildScrollbar(
       BuildContext context, Widget child, ScrollableDetails details) {
+    // Always visible, so a player can see at a glance that a list continues —
+    // but 3px, inset, rounded and half-transparent, which reads as a progress
+    // indicator rather than the desktop chrome the default looks like. The
+    // track is only faintly there, so it never draws a hard line down the
+    // edge of the screen.
     return RawScrollbar(
       controller: details.controller,
-      thumbColor: ZR.primary.withValues(alpha: 0.45),
-      thickness: 2.5,
-      radius: const Radius.circular(2),
-      thumbVisibility: false,
+      thumbColor: ZR.primary.withValues(alpha: 0.65),
+      trackColor: Colors.white.withValues(alpha: 0.05),
+      trackBorderColor: Colors.transparent,
+      thickness: 3,
+      radius: const Radius.circular(3),
+      thumbVisibility: true,
+      trackVisibility: true,
+      minThumbLength: 28,
+      crossAxisMargin: 2,
+      mainAxisMargin: 6,
       child: child,
     );
   }

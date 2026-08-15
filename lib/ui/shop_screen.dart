@@ -15,7 +15,11 @@ import 'theme.dart';
 /// you buy is what you get on the battlefield.
 class ShopScreen extends StatefulWidget {
   final RoyaleGame game;
-  const ShopScreen({super.key, required this.game});
+  /// Collection mode: show only what the player already owns, with no prices.
+  /// A "collection" that lists everything in the store is just the store
+  /// again, and it makes owning things feel like it means nothing.
+  final bool ownedOnly;
+  const ShopScreen({super.key, required this.game, this.ownedOnly = false});
 
   @override
   State<ShopScreen> createState() => _ShopScreenState();
@@ -242,8 +246,8 @@ class _ShopScreenState extends State<ShopScreen> {
             children: [
               ZrTopBar(
                   game: widget.game,
-                  active: Screen.shop,
-                  subtitle: 'ARMORY',
+                  active: widget.ownedOnly ? Screen.collection : Screen.shop,
+                  subtitle: widget.ownedOnly ? 'COLLECTION' : 'ARMORY',
                   onBack: () => widget.game.screen.value = Screen.start),
               _tabs(),
               Expanded(child: _grid()),
@@ -295,16 +299,23 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   Widget _grid() {
-    final items = _items();
+    final all = _items();
+    final items =
+        widget.ownedOnly ? all.where((i) => i.owned).toList() : all;
     if (items.isEmpty) {
       return Center(
-        child: Text('NOTHING HERE YET — UNLOCK A HERO FIRST',
+        child: Text(
+            widget.ownedOnly
+                ? 'NOTHING IN THIS CATEGORY YET — BUY SOMETHING IN THE STORE'
+                : 'NOTHING HERE YET — UNLOCK A HERO FIRST',
+            textAlign: TextAlign.center,
             style: ZR.mono(11, color: Colors.white38, spacing: 1)),
       );
     }
     return LayoutBuilder(builder: (context, box) {
       final cols = (box.maxWidth / 155).floor().clamp(3, 8);
-      return GridView.builder(
+      return ZrScroll(
+          child: GridView.builder(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
         itemCount: items.length,
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -314,7 +325,7 @@ class _ShopScreenState extends State<ShopScreen> {
           childAspectRatio: 1.0,
         ),
         itemBuilder: (_, i) => _card(items[i]),
-      );
+      ));
     });
   }
 
@@ -375,6 +386,19 @@ class _ShopScreenState extends State<ShopScreen> {
   }
 
   Widget _priceButton(_ShopItem it, bool equipped) {
+    if (widget.ownedOnly && !equipped) {
+      return Container(
+        height: 26,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: ZR.secondary.withValues(alpha: 0.6)),
+        ),
+        child: Text('TAP TO EQUIP',
+            style: ZR.display(14, color: ZR.secondary, spacing: 0.8)),
+      );
+    }
     if (equipped) {
       return Container(
         height: 26,

@@ -460,7 +460,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         const SizedBox(height: 7),
         Expanded(
             child: _railCard(Icons.inventory_2_outlined, 'COLLECTION',
-                ZR.secondary, () => _go(Screen.shop))),
+                ZR.secondary, () => _go(Screen.collection))),
         const SizedBox(height: 7),
         Expanded(
             child: _railCard(Icons.assignment_turned_in_outlined, 'MISSIONS',
