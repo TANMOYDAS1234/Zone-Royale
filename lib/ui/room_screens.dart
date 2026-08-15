@@ -100,13 +100,13 @@ class RoomConfigView extends StatelessWidget {
                               Expanded(child: _console(context)),
                             ],
                           )
-                        : SingleChildScrollView(
+                        : ZrScroll(child: SingleChildScrollView(
                             child: Column(children: [
                               SizedBox(height: 190, child: _preview()),
                               const SizedBox(height: 12),
                               _console(context, scroll: false),
                             ]),
-                          ),
+                          )),
                   ),
                 ),
               ],
@@ -331,7 +331,7 @@ class RoomConfigView extends StatelessWidget {
         ),
       ],
     );
-    return scroll ? SingleChildScrollView(child: body) : body;
+    return scroll ? ZrScroll(child: SingleChildScrollView(child: body)) : body;
   }
 
   Widget _dropField(IconData icon, String label, String value,
@@ -564,13 +564,13 @@ class RoomLobbyView extends StatelessWidget {
                               Expanded(child: _roster(c)),
                             ],
                           )
-                        : SingleChildScrollView(
+                        : ZrScroll(child: SingleChildScrollView(
                             child: Column(children: [
                               _briefing(c),
                               const SizedBox(height: 12),
                               _roster(c, scroll: false),
                             ]),
-                          ),
+                          )),
                   ),
                 ),
               ],
@@ -583,7 +583,7 @@ class RoomLobbyView extends StatelessWidget {
 
   Widget _briefing(NetClient c) {
     final mapSel = _mapIndex(c.map);
-    return SingleChildScrollView(
+    return ZrScroll(child: SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -707,7 +707,7 @@ class RoomLobbyView extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 
   static int _mapIndex(String name) {
@@ -791,7 +791,7 @@ class RoomLobbyView extends StatelessWidget {
             onTap: onStart),
       ],
     );
-    return scroll ? SingleChildScrollView(child: body) : body;
+    return scroll ? ZrScroll(child: SingleChildScrollView(child: body)) : body;
   }
 
   Widget _playerCard(NetClient c, NetPlayer p) {

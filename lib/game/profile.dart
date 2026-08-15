@@ -42,6 +42,9 @@ class Profile {
   /// many permanent marks stay on the ground — the dial to turn if the game
   /// ever feels like it is stuttering on your phone.
   int quality = 1;
+  /// Id of the worn player title (see game/titles.dart). Empty = auto-pick
+  /// the best one unlocked.
+  String title = '';
   /// Menu/background music level, 0 = off.
   double musicVolume = 0.5;
   /// Everything else — gunfire, UI clicks, explosions.
@@ -329,6 +332,7 @@ class Profile {
       orientation = (p.getInt('orientation') ?? 0).clamp(0, 2);
       shake = (p.getDouble('shake') ?? 0.5).clamp(0.0, 1.0);
       quality = (p.getInt('quality') ?? 1).clamp(0, kQualities.length - 1);
+      title = p.getString('title') ?? '';
       musicVolume = (p.getDouble('musicVol') ?? 0.5).clamp(0.0, 1.0);
       sfxVolume = (p.getDouble('sfxVol') ?? 0.9).clamp(0.0, 1.0);
       streak = p.getInt('streak') ?? 0;
@@ -414,6 +418,7 @@ class Profile {
       await p.setInt('orientation', orientation);
       await p.setDouble('shake', shake);
       await p.setInt('quality', quality);
+      await p.setString('title', title);
       await p.setDouble('musicVol', musicVolume);
       await p.setDouble('sfxVol', sfxVolume);
       await p.setInt('streak', streak);
@@ -480,6 +485,7 @@ class Profile {
         'difficulty': difficulty,
         'musicVol': musicVolume,
         'sfxVol': sfxVolume,
+        'title': title,
         'shake': shake,
         'matchMode': matchMode,
         'mapChoice': mapChoice,
@@ -543,6 +549,7 @@ class Profile {
     leftHanded = b('leftHanded', leftHanded);
     quality = i('quality', quality).clamp(0, kQualities.length - 1);
     musicVolume = d('musicVol', musicVolume).clamp(0.0, 1.0);
+    title = (j['title'] as String?) ?? title;
     sfxVolume = d('sfxVol', sfxVolume).clamp(0.0, 1.0);
     difficulty = i('difficulty', difficulty).clamp(0, kDifficulties.length - 1);
     shake = d('shake', shake).clamp(0.0, 1.0);

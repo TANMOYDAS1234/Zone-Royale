@@ -241,7 +241,10 @@ class _ShopScreenState extends State<ShopScreen> {
           child: Column(
             children: [
               ZrTopBar(
-                  game: widget.game, active: Screen.shop, subtitle: 'ARMORY'),
+                  game: widget.game,
+                  active: Screen.shop,
+                  subtitle: 'ARMORY',
+                  onBack: () => widget.game.screen.value = Screen.start),
               _tabs(),
               Expanded(child: _grid()),
               ZrBottomNav(game: widget.game, active: Screen.shop),

@@ -1440,6 +1440,9 @@ void drawOperatorTile(
   double headBias = 0.0, // shifts the framing toward the head
   bool vest = false,
   bool helmet = false,
+  /// Spin, in radians, added to the facing. The lobby drives this from a drag
+  /// so the player can turn their operator and look at the gear.
+  double turn = 0,
 }) {
   final fill = Paint()..style = PaintingStyle.fill;
   final stroke = Paint()..style = PaintingStyle.stroke;
@@ -1476,8 +1479,9 @@ void drawOperatorTile(
           height: r * 0.9),
       fill..color = const Color(0x55000000));
 
-  // -pi/2 = facing the top of the tile
-  drawOperator(canvas, centre, r, -math.pi / 2, -math.pi / 2, outfit, skin,
+  // -pi/2 = facing the top of the tile, plus whatever spin the player applied
+  final face = -math.pi / 2 + turn;
+  drawOperator(canvas, centre, r, face, face, outfit, skin,
       accessory, weapon,
       fill: fill,
       stroke: stroke,

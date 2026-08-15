@@ -57,6 +57,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ZrTopBar(
                     game: widget.game,
                     active: Screen.profile,
+                  onBack: () => widget.game.screen.value = Screen.start,
                     subtitle: 'OPERATOR CONFIG'),
                 Expanded(
                   child: Padding(
@@ -70,13 +71,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               Expanded(flex: 6, child: _settings()),
                             ],
                           )
-                        : SingleChildScrollView(
+                        : ZrScroll(child: SingleChildScrollView(
                             child: Column(children: [
                               SizedBox(height: 230, child: _left()),
                               const SizedBox(height: 12),
                               _settings(scroll: false),
                             ]),
-                          ),
+                          )),
                   ),
                 ),
                 _statsStrip(),
@@ -464,7 +465,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             }),
       ],
     );
-    return scroll ? SingleChildScrollView(child: body) : body;
+    return scroll ? ZrScroll(child: SingleChildScrollView(child: body)) : body;
   }
 
   /// A labelled volume slider that reads OFF at zero, so "no music" is an

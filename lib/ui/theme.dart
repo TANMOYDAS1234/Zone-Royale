@@ -232,6 +232,33 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant _GridPainter old) => old.cell != cell;
 }
 
+/// A scroll view whose scrollbar is always visible.
+///
+/// Flutter hides the thumb until you drag, which is exactly backwards on a
+/// screen nobody has scrolled yet: a player cannot know there is more content
+/// below unless something tells them. This makes the track permanent, in the
+/// app's own amber, so "there is more here" is visible at a glance.
+class ZrScroll extends StatelessWidget {
+  final Widget child;
+  const ZrScroll({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return ScrollbarTheme(
+      data: ScrollbarThemeData(
+        thumbVisibility: const WidgetStatePropertyAll(true),
+        trackVisibility: const WidgetStatePropertyAll(true),
+        thickness: const WidgetStatePropertyAll(4),
+        radius: const Radius.circular(3),
+        thumbColor: WidgetStatePropertyAll(ZR.primary.withValues(alpha: 0.75)),
+        trackColor: WidgetStatePropertyAll(Colors.white.withValues(alpha: 0.06)),
+        trackBorderColor: const WidgetStatePropertyAll(Colors.transparent),
+      ),
+      child: Scrollbar(child: child),
+    );
+  }
+}
+
 /// The primary button used for DROP IN / START MISSION / CLAIM REWARDS.
 class ZrButton extends StatefulWidget {
   final String label;

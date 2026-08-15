@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../game/char_art.dart';
 import '../game/config.dart';
 import '../game/profile.dart';
 import '../game/royale_game.dart';
 import '../game/sfx.dart';
+import '../game/titles.dart';
 import '../net/net_arena.dart';
 import 'map_select.dart';
 import 'shell.dart';
@@ -32,6 +34,10 @@ class LobbyScreen extends StatefulWidget {
 
 class _LobbyScreenState extends State<LobbyScreen> {
   late int _mode = Profile.instance.matchMode.clamp(0, kMatchModes.length - 1);
+
+  /// How far the operator has been spun by dragging, in radians. Purely for
+  /// show — you turn them to look at the kit you just bought.
+  double _turn = 0;
 
   String _look() {
     final p = Profile.instance;
@@ -90,70 +96,123 @@ class _LobbyScreenState extends State<LobbyScreen> {
       height: 54,
       child: Row(
         children: [
-          // player card — avatar, name, level, XP
-          Container(
-            width: 250,
-            padding: const EdgeInsets.fromLTRB(6, 5, 12, 5),
-            decoration: ZR.panel(radius: 12, border: ZR.primary.withValues(alpha: 0.32)),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [Color(0xFF2A2140), Color(0xFF16121F)]),
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: p.rankColor.withValues(alpha: 0.7)),
-                  ),
-                  child: Text('${p.level}',
-                      style: ZR.display(22, color: p.rankColor)),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
+          // Player card: your actual operator as the avatar, your worn title
+          // beside your name, and the level bar underneath. Tapping it opens
+          // the profile — a card showing who you are should take you to where
+          // you change who you are.
+          GestureDetector(
+            onTap: () => _go(Screen.profile),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 268,
+              padding: const EdgeInsets.fromLTRB(5, 5, 12, 5),
+              decoration: ZR.panel(
+                  radius: 12, border: ZR.primary.withValues(alpha: 0.32)),
+              child: Row(
+                children: [
+                  Stack(
                     children: [
-                      Text(p.name.toUpperCase(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: ZR.display(18, spacing: 0.8)),
-                      const SizedBox(height: 3),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: LinearProgressIndicator(
-                          value: p.xpFraction,
-                          minHeight: 5,
-                          backgroundColor: Colors.white10,
-                          valueColor: AlwaysStoppedAnimation(p.rankColor),
+                      Container(
+                        width: 42,
+                        height: 42,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.45),
+                          borderRadius: BorderRadius.circular(9),
+                          border: Border.all(
+                              color: p.rankColor.withValues(alpha: 0.7)),
+                        ),
+                        child: CustomPaint(
+                            painter: _AvatarPainter(look: _look())),
+                      ),
+                      Positioned(
+                        left: 0,
+                        bottom: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.85),
+                            borderRadius: const BorderRadius.only(
+                                topRight: Radius.circular(6),
+                                bottomLeft: Radius.circular(8)),
+                          ),
+                          child: Text('${p.level}',
+                              style: ZR.display(13, color: p.rankColor)),
                         ),
                       ),
                     ],
                   ),
-                ),
-              ],
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(p.name.toUpperCase(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: ZR.display(18, spacing: 0.8)),
+                            ),
+                            const SizedBox(width: 6),
+                            _titleChip(),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: p.xpFraction,
+                                  minHeight: 5,
+                                  backgroundColor: Colors.white10,
+                                  valueColor:
+                                      AlwaysStoppedAnimation(p.rankColor),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text('${p.xp}/${p.xpForNext}',
+                                style: ZR.mono(7, color: Colors.white38)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 8),
           _currency(Icons.monetization_on, '${p.coins}', ZR.primary),
           const Spacer(),
           // the icon rail everyone expects along the top right
-          _topIcon(Icons.mail_outline, 'MAIL', () => _inbox()),
+          _topIcon(Icons.mail_outline, 'MAIL', _inbox,
+              badge: Profile.instance.streakReady),
           const SizedBox(width: 7),
           _topIcon(Icons.local_activity_outlined, 'EVENTS',
               () => _go(Screen.missions)),
           const SizedBox(width: 7),
+          // PROFILE and SETTINGS went to the same place, so there is one.
           _topIcon(Icons.person_outline, 'PROFILE', () => _go(Screen.profile)),
-          const SizedBox(width: 7),
-          _topIcon(Icons.settings, 'SETTINGS', () => _go(Screen.profile)),
         ],
       ),
     );
   }
 
-  Widget _currency(IconData icon, String value, Color color) => Container(
+  Widget _currency(IconData icon, String value, Color color) =>
+      GestureDetector(
+        onTap: () {
+          Sfx.tap();
+          _getCoins();
+        },
+        behavior: HitTestBehavior.opaque,
+        child: Container(
         height: 54,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: ZR.panel(radius: 12, border: color.withValues(alpha: 0.35)),
@@ -175,29 +234,153 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ],
         ),
-      );
+      ));
 
-  Widget _topIcon(IconData icon, String label, VoidCallback onTap) {
+  /// Where coins come from. Playing is listed first on purpose: the fastest
+  /// way to lose a player is to make the shop feel like the only route.
+  void _getCoins() {
+    final p = Profile.instance;
+    Widget row(IconData i, String title, String sub, Color c) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            Icon(i, size: 18, color: c),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title, style: ZR.display(17, color: Colors.white)),
+                  Text(sub,
+                      style: ZR.body(11, color: Colors.white54, height: 1.3)),
+                ],
+              ),
+            ),
+          ]),
+        );
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: ZR.surface,
+        title: Row(children: [
+          const Icon(Icons.monetization_on, color: ZR.primary, size: 20),
+          const SizedBox(width: 9),
+          Text('GET COINS', style: ZR.display(24)),
+          const Spacer(),
+          Text('${p.coins}', style: ZR.display(22, color: ZR.primary)),
+        ]),
+        // A landscape phone is 360dp tall before the keyboard; an unbounded
+        // dialog puts its buttons on top of its own content.
+        content: SizedBox(
+          width: 380,
+          height: 150,
+          child: ZrScroll(
+            child: SingleChildScrollView(
+            child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              row(Icons.play_circle_outline, 'PLAY A MATCH',
+                  'Every match pays out, win or lose. A win pays about five times a loss.',
+                  ZR.success),
+              row(Icons.assignment_turned_in_outlined, 'DAILY MISSIONS',
+                  'Three objectives a day. They reset every 24 hours.',
+                  ZR.secondary),
+              row(Icons.card_giftcard, 'DAILY LOGIN',
+                  'Open the game each day. The bonus grows for seven days running.',
+                  ZR.primary),
+              const Divider(color: Colors.white12, height: 18),
+              row(Icons.shopping_bag_outlined, 'COIN PACKS',
+                  'Buying coins with real money is not switched on yet. It will never sell power — cosmetics only.',
+                  Colors.white38),
+            ],
+          ),
+        ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _go(Screen.missions);
+            },
+            child: Text('OPEN MISSIONS',
+                style: ZR.display(18, color: ZR.secondary)),
+          ),
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child:
+                  Text('CLOSE', style: ZR.display(18, color: Colors.white38))),
+        ],
+      ),
+    );
+  }
+
+  Widget _topIcon(IconData icon, String label, VoidCallback onTap,
+      {bool badge = false}) {
     return GestureDetector(
       onTap: () {
         Sfx.tap();
         onTap();
       },
       behavior: HitTestBehavior.opaque,
-      child: Container(
+      child: SizedBox(
         width: 52,
         height: 54,
-        decoration: ZR.panel(radius: 11),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Stack(
           children: [
-            Icon(icon, size: 19, color: Colors.white70),
-            const SizedBox(height: 2),
-            Text(label,
-                style: ZR.mono(7, color: Colors.white38, spacing: 0.4)),
+            Container(
+              decoration: ZR.panel(radius: 11),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 19, color: Colors.white70),
+                  const SizedBox(height: 2),
+                  Text(label,
+                      style: ZR.mono(7, color: Colors.white38, spacing: 0.4)),
+                ],
+              ),
+            ),
+            // an unread dot, so a waiting reward is visible without opening it
+            if (badge)
+              Positioned(
+                right: 6,
+                top: 6,
+                child: Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: ZR.danger,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: ZR.bg, width: 1.5),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  /// The worn title, next to the name — the only thing other players see.
+  Widget _titleChip() {
+    final t = titleFor(Profile.instance);
+    const tierColour = [
+      Color(0xFF8B8B8C),
+      ZR.secondary,
+      Color(0xFFB06BFF),
+      ZR.primary,
+    ];
+    final c = tierColour[t.tier.clamp(0, 3)];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: c.withValues(alpha: 0.7)),
+      ),
+      child: Text(t.name,
+          maxLines: 1, style: ZR.display(11, color: c, spacing: 0.6)),
     );
   }
 
@@ -321,9 +504,33 @@ class _LobbyScreenState extends State<LobbyScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // the operator, large and centred — the point of the whole screen
-        ZrOperatorStage(
-            height: 999, showReadouts: false, key: ValueKey(_look())),
+        // The operator, large and centred — the point of the whole screen —
+        // and draggable: sweep left or right to turn them and look at the
+        // gear from another side.
+        GestureDetector(
+          onHorizontalDragUpdate: (d) =>
+              setState(() => _turn += d.delta.dx * 0.012),
+          onDoubleTap: () => setState(() => _turn = 0),
+          behavior: HitTestBehavior.opaque,
+          child: ZrOperatorStage(
+              height: 999,
+              showReadouts: false,
+              turn: _turn,
+              key: ValueKey(_look())),
+        ),
+        // a quiet hint the first time, so the interaction is discoverable
+        if (_turn == 0)
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 10,
+            child: IgnorePointer(
+              child: Center(
+                child: Text('DRAG TO TURN',
+                    style: ZR.mono(8, color: Colors.white24, spacing: 2)),
+              ),
+            ),
+          ),
         // loadout summary along the bottom of the stage
         Positioned(
           left: 10,
@@ -508,4 +715,32 @@ class _LobbyScreenState extends State<LobbyScreen> {
       ),
     );
   }
+}
+
+
+/// The player's own operator, framed head-and-shoulders, for the lobby avatar.
+class _AvatarPainter extends CustomPainter {
+  final String look;
+  const _AvatarPainter({required this.look});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Profile.instance;
+    drawOperatorTile(
+      canvas,
+      Offset.zero & size,
+      outfit: p.outfitColor,
+      skin: p.skinColor,
+      accessory: p.accessory,
+      hero: p.hero,
+      weapon: p.startWeapon,
+      zoom: 1.5,
+      headBias: 0.22,
+      vest: true,
+      helmet: true,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _AvatarPainter old) => old.look != look;
 }

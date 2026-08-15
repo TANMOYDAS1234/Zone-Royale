@@ -19,6 +19,10 @@ class ZrTopBar extends StatelessWidget {
   final String? subtitle;
   final Widget? trailing;
   final VoidCallback? onSettings;
+  /// Shows a back arrow at the far left. The lobby is the hub now, so every
+  /// screen you reach from it needs an obvious way home — hunting for the
+  /// right tab in the bottom rail is not that.
+  final VoidCallback? onBack;
   const ZrTopBar({
     super.key,
     required this.game,
@@ -26,6 +30,7 @@ class ZrTopBar extends StatelessWidget {
     this.subtitle,
     this.trailing,
     this.onSettings,
+    this.onBack,
   });
 
   static const _tabs = [
@@ -49,6 +54,31 @@ class ZrTopBar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(18, 4, 18, 6),
         child: Row(
           children: [
+            if (onBack != null) ...[
+              GestureDetector(
+                onTap: () {
+                  Sfx.back();
+                  onBack!();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: ZR.line)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.arrow_back,
+                        size: 15, color: Colors.white70),
+                    const SizedBox(width: 6),
+                    Text('BACK',
+                        style: ZR.display(14, color: Colors.white70)),
+                  ]),
+                ),
+              ),
+              const SizedBox(width: 12),
+            ],
             const ZrLogo(height: 30),
             if (subtitle != null && box.maxWidth > 620) ...[
               const SizedBox(width: 12),
@@ -92,6 +122,7 @@ class ZrTopBar extends StatelessWidget {
                 label: '${p.coins}',
                 color: ZR.primary),
             const SizedBox(width: 8),
+            if (active != Screen.profile)
             GestureDetector(
               onTap: onSettings ??
                   () {
@@ -281,7 +312,13 @@ class _NavButton extends StatelessWidget {
 class ZrOperatorStage extends StatelessWidget {
   final double height;
   final bool showReadouts;
-  const ZrOperatorStage({super.key, this.height = 260, this.showReadouts = true});
+  /// Radians the operator has been spun by dragging, in the lobby.
+  final double turn;
+  const ZrOperatorStage(
+      {super.key,
+      this.height = 260,
+      this.showReadouts = true,
+      this.turn = 0});
 
   @override
   Widget build(BuildContext context) {
@@ -307,6 +344,7 @@ class ZrOperatorStage extends StatelessWidget {
                 weapon: p.startWeapon,
                 hero: p.hero,
                 accent: Color(hero.color),
+                turn: turn,
               ),
             ),
           ),
@@ -426,6 +464,8 @@ class OperatorStagePainter extends CustomPainter {
   final Color outfit, skin, accent;
   final int accessory, hero;
   final WeaponId weapon;
+  /// Spin applied by dragging the stage.
+  final double turn;
   OperatorStagePainter({
     required this.outfit,
     required this.skin,
@@ -433,6 +473,7 @@ class OperatorStagePainter extends CustomPainter {
     required this.weapon,
     required this.hero,
     required this.accent,
+    this.turn = 0,
   });
 
   @override
@@ -444,11 +485,14 @@ class OperatorStagePainter extends CustomPainter {
         hero: hero,
         weapon: weapon,
         glow: accent,
+        // the drag spin: the operator turns in place
+        turn: turn,
         zoom: 0.9);
   }
 
   @override
   bool shouldRepaint(covariant OperatorStagePainter old) =>
+      old.turn != turn ||
       old.outfit != outfit ||
       old.skin != skin ||
       old.accessory != accessory ||

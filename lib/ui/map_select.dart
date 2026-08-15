@@ -244,13 +244,13 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
                           Expanded(child: _grid()),
                         ],
                       )
-                    : SingleChildScrollView(
+                    : ZrScroll(child: SingleChildScrollView(
                         child: Column(children: [
                           _sidebar(p),
                           const SizedBox(height: 14),
                           _grid(scroll: false),
                         ]),
-                      ),
+                      )),
               ),
             ),
               ],
@@ -263,7 +263,7 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
   }
 
   Widget _sidebar(Profile p) {
-    return SingleChildScrollView(
+    return ZrScroll(child: SingleChildScrollView(
       child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -444,7 +444,7 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
         ),
       ],
       ),
-    );
+    ));
   }
 
   /// A labelled 0..1 bar — used to show at a glance how hard the bots hit.
@@ -500,7 +500,7 @@ class _MapSelectScreenState extends State<MapSelectScreen> {
       }
       return Column(children: rows);
     });
-    return scroll ? SingleChildScrollView(child: body) : body;
+    return scroll ? ZrScroll(child: SingleChildScrollView(child: body)) : body;
   }
 
   Widget _card(int choice, bool sel) {

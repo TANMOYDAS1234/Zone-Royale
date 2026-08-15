@@ -77,9 +77,10 @@ class _MissionsScreenState extends State<MissionsScreen> {
               ZrTopBar(
                   game: widget.game,
                   active: Screen.missions,
+                  onBack: () => widget.game.screen.value = Screen.start,
                   subtitle: 'INTEL'),
               Expanded(
-                child: SingleChildScrollView(
+                child: ZrScroll(child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -94,7 +95,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                       _notes(),
                     ],
                   ),
-                ),
+                )),
               ),
               ZrBottomNav(game: widget.game, active: Screen.missions),
             ],

@@ -67,7 +67,11 @@ Future<void> main() async {
   // Edge-to-edge with transparent bars: the game fills the screen and stays
   // rock-steady (immersive/sticky mode flickers when you touch the bottom edge
   // where the joysticks live), and the soft keyboard works for the name field.
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  // Full screen, the way every mobile shooter runs: no clock, no battery, no
+  // navigation bar. immersiveSticky brings the bars back with a swipe and then
+  // hides them again on its own, so nothing is unreachable — it just is not
+  // sitting on top of the game.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     systemNavigationBarColor: Colors.transparent,
@@ -136,6 +140,8 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     // Android reverts to the system refresh rate when we're backgrounded
     if (state == AppLifecycleState.resumed) {
       _useHighRefreshRate();
+      // Android restores the system bars when the app is backgrounded
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
       if (game.screen.value != Screen.playing) Sfx.startMenuMusic();
     } else {
       // never keep playing music over another app
