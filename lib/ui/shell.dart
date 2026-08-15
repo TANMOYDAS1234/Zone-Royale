@@ -122,7 +122,10 @@ class ZrTopBar extends StatelessWidget {
                 label: '${p.coins}',
                 color: ZR.primary),
             const SizedBox(width: 8),
-            if (active != Screen.profile)
+            // Only offered where it is the only way through. Every hub screen
+            // has a BACK button now, so a gear that just opens PROFILE is one
+            // more thing to read and nothing to do.
+            if (onSettings != null)
             GestureDetector(
               onTap: onSettings ??
                   () {

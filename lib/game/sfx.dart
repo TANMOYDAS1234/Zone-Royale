@@ -29,6 +29,23 @@ class Sfx {
   static Future<void> init() async {
     if (_ready) return;
     try {
+      // Do NOT take exclusive audio focus. audioplayers asks for it by
+      // default, which pauses whatever the player already had going —
+      // Spotify, a podcast, anything. A game should mix with the music
+      // someone chose to listen to, not switch it off for them.
+      await AudioPlayer.global.setAudioContext(AudioContext(
+        android: const AudioContextAndroid(
+          isSpeakerphoneOn: false,
+          stayAwake: false,
+          contentType: AndroidContentType.sonification,
+          usageType: AndroidUsageType.game,
+          audioFocus: AndroidAudioFocus.none,
+        ),
+        iOS: AudioContextIOS(
+          category: AVAudioSessionCategory.ambient,
+          options: const {AVAudioSessionOptions.mixWithOthers},
+        ),
+      ));
       _shoot = await _Voice.make('sfx/shoot.wav', 4);
       _hit = await _Voice.make('sfx/hit.wav', 2);
       _hurt = await _Voice.make('sfx/hurt.wav', 1);

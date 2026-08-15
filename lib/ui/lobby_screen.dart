@@ -125,22 +125,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         child: CustomPaint(
                             painter: _AvatarPainter(look: _look())),
                       ),
-                      Positioned(
-                        left: 0,
-                        bottom: 0,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.85),
-                            borderRadius: const BorderRadius.only(
-                                topRight: Radius.circular(6),
-                                bottomLeft: Radius.circular(8)),
-                          ),
-                          child: Text('${p.level}',
-                              style: ZR.display(13, color: p.rankColor)),
-                        ),
-                      ),
                     ],
                   ),
                   const SizedBox(width: 9),
@@ -159,6 +143,22 @@ class _LobbyScreenState extends State<LobbyScreen> {
                             ),
                             const SizedBox(width: 6),
                             _titleChip(),
+                            const SizedBox(width: 6),
+                            // the level reads better as a labelled chip than
+                            // as a bare number stamped on the portrait
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: p.rankColor.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(5),
+                                border: Border.all(
+                                    color: p.rankColor.withValues(alpha: 0.6)),
+                              ),
+                              child: Text('LV ${p.level}',
+                                  style: ZR.display(11,
+                                      color: p.rankColor, spacing: 0.5)),
+                            ),
                           ],
                         ),
                         const SizedBox(height: 3),
@@ -192,14 +192,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _currency(Icons.monetization_on, '${p.coins}', ZR.primary),
           const Spacer(),
           // the icon rail everyone expects along the top right
-          _topIcon(Icons.mail_outline, 'MAIL', _inbox,
-              badge: Profile.instance.streakReady),
-          const SizedBox(width: 7),
-          _topIcon(Icons.local_activity_outlined, 'EVENTS',
-              () => _go(Screen.missions)),
-          const SizedBox(width: 7),
-          // PROFILE and SETTINGS went to the same place, so there is one.
-          _topIcon(Icons.person_outline, 'PROFILE', () => _go(Screen.profile)),
+          // One panel, three equal cells, hairline dividers. Three floating
+          // tiles with gaps between them read as three unrelated things that
+          // happen to be near each other.
+          Container(
+            height: 54,
+            decoration: ZR.panel(radius: 12),
+            child: Row(
+              children: [
+                _topIcon(Icons.mail_outline, 'MAIL', _inbox,
+                    badge: Profile.instance.streakReady),
+                _divider(),
+                _topIcon(Icons.local_activity_outlined, 'EVENTS',
+                    () => _go(Screen.missions)),
+                _divider(),
+                _topIcon(Icons.person_outline, 'PROFILE',
+                    () => _go(Screen.profile)),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -316,6 +327,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
     );
   }
 
+  Widget _divider() => Container(
+      width: 1, height: 30, color: Colors.white.withValues(alpha: 0.10));
+
   Widget _topIcon(IconData icon, String label, VoidCallback onTap,
       {bool badge = false}) {
     return GestureDetector(
@@ -325,34 +339,32 @@ class _LobbyScreenState extends State<LobbyScreen> {
       },
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 52,
+        width: 58,
         height: 54,
         child: Stack(
+          alignment: Alignment.center,
           children: [
-            Container(
-              decoration: ZR.panel(radius: 11),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(icon, size: 19, color: Colors.white70),
-                  const SizedBox(height: 2),
-                  Text(label,
-                      style: ZR.mono(7, color: Colors.white38, spacing: 0.4)),
-                ],
-              ),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 19, color: Colors.white70),
+                const SizedBox(height: 3),
+                Text(label,
+                    style: ZR.mono(7, color: Colors.white38, spacing: 0.4)),
+              ],
             ),
             // an unread dot, so a waiting reward is visible without opening it
             if (badge)
               Positioned(
-                right: 6,
-                top: 6,
+                right: 12,
+                top: 10,
                 child: Container(
-                  width: 9,
-                  height: 9,
+                  width: 8,
+                  height: 8,
                   decoration: BoxDecoration(
                     color: ZR.danger,
                     shape: BoxShape.circle,
-                    border: Border.all(color: ZR.bg, width: 1.5),
+                    border: Border.all(color: ZR.bg, width: 1.4),
                   ),
                 ),
               ),

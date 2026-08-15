@@ -232,31 +232,90 @@ class _GridPainter extends CustomPainter {
   bool shouldRepaint(covariant _GridPainter old) => old.cell != cell;
 }
 
-/// A scroll view whose scrollbar is always visible.
+/// A scroll view that tells you there is more, without a scrollbar.
 ///
-/// Flutter hides the thumb until you drag, which is exactly backwards on a
-/// screen nobody has scrolled yet: a player cannot know there is more content
-/// below unless something tells them. This makes the track permanent, in the
-/// app's own amber, so "there is more here" is visible at a glance.
-class ZrScroll extends StatelessWidget {
+/// A permanently visible track reads as cheap — it is chrome borrowed from a
+/// desktop file manager. What premium apps do instead is fade the edge that
+/// has more content behind it, so the page looks like it continues rather
+/// than ending in a hard line, and show a hairline thumb only while you are
+/// actually moving. Both cues here are driven by real scroll position, so the
+/// fade disappears the moment you reach the end.
+class ZrScroll extends StatefulWidget {
   final Widget child;
-  const ZrScroll({super.key, required this.child});
+  final Axis axis;
+  const ZrScroll({super.key, required this.child, this.axis = Axis.vertical});
+
+  @override
+  State<ZrScroll> createState() => _ZrScrollState();
+}
+
+class _ZrScrollState extends State<ZrScroll> {
+  bool _more = false; // content continues past the far edge
+  bool _before = false; // content continues past the near edge
+
+  bool _onScroll(ScrollNotification n) {
+    final m = n.metrics;
+    if (!m.hasContentDimensions) return false;
+    final more = m.pixels < m.maxScrollExtent - 1;
+    final before = m.pixels > m.minScrollExtent + 1;
+    if (more != _more || before != _before) {
+      setState(() {
+        _more = more;
+        _before = before;
+      });
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ScrollbarTheme(
-      data: ScrollbarThemeData(
-        thumbVisibility: const WidgetStatePropertyAll(true),
-        trackVisibility: const WidgetStatePropertyAll(true),
-        thickness: const WidgetStatePropertyAll(4),
-        radius: const Radius.circular(3),
-        thumbColor: WidgetStatePropertyAll(ZR.primary.withValues(alpha: 0.75)),
-        trackColor: WidgetStatePropertyAll(Colors.white.withValues(alpha: 0.06)),
-        trackBorderColor: const WidgetStatePropertyAll(Colors.transparent),
+    final vertical = widget.axis == Axis.vertical;
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScroll,
+      child: ShaderMask(
+        // fade only the edges that actually have something behind them
+        shaderCallback: (rect) => LinearGradient(
+          begin: vertical ? Alignment.topCenter : Alignment.centerLeft,
+          end: vertical ? Alignment.bottomCenter : Alignment.centerRight,
+          colors: [
+            _before ? const Color(0x00FFFFFF) : const Color(0xFFFFFFFF),
+            const Color(0xFFFFFFFF),
+            const Color(0xFFFFFFFF),
+            _more ? const Color(0x00FFFFFF) : const Color(0xFFFFFFFF),
+          ],
+          stops: const [0.0, 0.06, 0.93, 1.0],
+        ).createShader(rect),
+        blendMode: BlendMode.dstIn,
+        child: ScrollConfiguration(
+          // the hairline thumb, no track, and only while moving
+          behavior: const _ZrScrollBehaviour(),
+          child: widget.child,
+        ),
       ),
-      child: Scrollbar(child: child),
     );
   }
+}
+
+class _ZrScrollBehaviour extends ScrollBehavior {
+  const _ZrScrollBehaviour();
+
+  @override
+  Widget buildScrollbar(
+      BuildContext context, Widget child, ScrollableDetails details) {
+    return RawScrollbar(
+      controller: details.controller,
+      thumbColor: ZR.primary.withValues(alpha: 0.45),
+      thickness: 2.5,
+      radius: const Radius.circular(2),
+      thumbVisibility: false,
+      child: child,
+    );
+  }
+
+  @override
+  Widget buildOverscrollIndicator(
+          BuildContext context, Widget child, ScrollableDetails details) =>
+      child;
 }
 
 /// The primary button used for DROP IN / START MISSION / CLAIM REWARDS.

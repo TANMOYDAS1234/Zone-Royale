@@ -97,7 +97,6 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   ),
                 )),
               ),
-              ZrBottomNav(game: widget.game, active: Screen.missions),
             ],
           ),
         ),

@@ -81,7 +81,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ),
                 _statsStrip(),
-                ZrBottomNav(game: widget.game, active: Screen.profile),
               ],
             );
           }),
