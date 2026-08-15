@@ -1526,11 +1526,97 @@ Future<void> main() async {
         onError: (_) => _leave(p),
         cancelOnError: true,
       );
+    } else if (req.uri.path == '/save' && req.method == 'POST') {
+      // Stash a profile blob and hand back a short code.
+      //
+      // The blob is ~1.4KB of base64. A QR of that is dense enough to be
+      // unreliable on a phone camera, and nobody is typing it. So the phone
+      // uploads it here and the OTHER phone fetches it with six characters —
+      // which fits in a tiny, rock-solid QR and can also just be read aloud.
+      try {
+        final body = await utf8.decoder.bind(req).join();
+        if (body.isEmpty || body.length > 64 * 1024) {
+          req.response
+            ..statusCode = HttpStatus.badRequest
+            ..close();
+          return;
+        }
+        _sweepSaves();
+        final code = _newSaveCode();
+        _saves[code] = _Save(body, DateTime.now());
+        req.response
+          ..statusCode = HttpStatus.ok
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({'code': code, 'ttlHours': saveTtlHours}))
+          ..close();
+      } catch (_) {
+        req.response
+          ..statusCode = HttpStatus.internalServerError
+          ..close();
+      }
+    } else if (req.uri.path.startsWith('/save/') && req.method == 'GET') {
+      _sweepSaves();
+      final code = req.uri.path.substring(6).toUpperCase();
+      final hit = _saves[code];
+      if (hit == null) {
+        req.response
+          ..statusCode = HttpStatus.notFound
+          ..write('no such code')
+          ..close();
+        return;
+      }
+      req.response
+        ..statusCode = HttpStatus.ok
+        ..headers.contentType = ContentType.text
+        ..write(hit.blob)
+        ..close();
     } else {
       req.response
         ..statusCode = HttpStatus.ok
         ..write('Zone Royale server OK')
         ..close();
+    }
+  }
+}
+
+// ======================================================================
+//  PROFILE TRANSFER CODES
+// ======================================================================
+/// How long a transfer code stays valid. Long enough to set up a new phone
+/// without rushing, short enough that nothing lingers.
+const int saveTtlHours = 48;
+const int maxSaves = 5000;
+
+class _Save {
+  final String blob;
+  final DateTime at;
+  _Save(this.blob, this.at);
+}
+
+final Map<String, _Save> _saves = {};
+
+/// No I, O, 0 or 1 — they are the characters people misread when copying a
+/// code off another screen.
+const String _codeAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+String _newSaveCode() {
+  final rng = Random.secure();
+  while (true) {
+    final code = List.generate(
+        6, (_) => _codeAlphabet[rng.nextInt(_codeAlphabet.length)]).join();
+    if (!_saves.containsKey(code)) return code;
+  }
+}
+
+void _sweepSaves() {
+  final cutoff = DateTime.now().subtract(const Duration(hours: saveTtlHours));
+  _saves.removeWhere((_, v) => v.at.isBefore(cutoff));
+  // hard cap, oldest first, so a flood cannot exhaust memory
+  if (_saves.length > maxSaves) {
+    final byAge = _saves.entries.toList()
+      ..sort((a, b) => a.value.at.compareTo(b.value.at));
+    for (var i = 0; i < byAge.length - maxSaves; i++) {
+      _saves.remove(byAge[i].key);
     }
   }
 }

@@ -2861,20 +2861,39 @@ class _ArenaPainter extends CustomPainter {
       final hero = mine ? Profile.instance.hero : c.heroOf(p.id) % kHeroes.length;
       final aim = _aims[p.id] ?? p.aim;
 
-      // grounded shadow, matching the map's single light direction
-      canvas.drawOval(
-          Rect.fromCenter(
-              center: pos.translate(_q.shadows ? 4 : 2, kPlayerRadius * 0.62),
-              width: kPlayerRadius * (_q.shadows ? 2.1 : 1.7),
-              height: kPlayerRadius * (_q.shadows ? 0.9 : 0.7)),
-          _fill..color = Colors.black.withValues(alpha: _q.shadows ? 0.4 : 0.22));
-      if (_q.shadows) {
+      // Grounded shadow that reacts to movement, exactly as the solo match
+      // does: the light does not move, so the shadow still falls down-right,
+      // but it stretches along the direction of travel and trails behind.
+      // Travel comes from the difference between the last two snapshots.
+      final prev = c.prevPosOf(p.id);
+      final travel = prev == null ? Offset.zero : pos - prev;
+      final run = (travel.distance / 6.0).clamp(0.0, 1.0);
+      final shadowAngle =
+          travel.distance > 0.6 ? math.atan2(travel.dy, travel.dx) : aim;
+      final trail = Offset(-math.cos(shadowAngle), -math.sin(shadowAngle)) *
+          (kPlayerRadius * 0.16 * run);
+
+      void groundShadow(double w, double h, double dx, double dy, double a) {
+        canvas.save();
+        canvas.translate(pos.dx + dx + trail.dx, pos.dy + dy + trail.dy);
+        canvas.rotate(shadowAngle);
         canvas.drawOval(
             Rect.fromCenter(
-                center: pos.translate(2, kPlayerRadius * 0.45),
-                width: kPlayerRadius * 1.4,
-                height: kPlayerRadius * 0.58),
-            _fill..color = Colors.black.withValues(alpha: 0.24));
+                center: Offset.zero,
+                width: w * (1 + 0.42 * run),
+                height: h * (1 - 0.16 * run)),
+            _fill..color = Colors.black.withValues(alpha: a));
+        canvas.restore();
+      }
+
+      if (_q.shadows) {
+        groundShadow(kPlayerRadius * 2.1, kPlayerRadius * 0.9, 4,
+            kPlayerRadius * 0.62, 0.4);
+        groundShadow(kPlayerRadius * 1.4, kPlayerRadius * 0.58, 2,
+            kPlayerRadius * 0.45, 0.24);
+      } else {
+        groundShadow(kPlayerRadius * 1.7, kPlayerRadius * 0.7, 2,
+            kPlayerRadius * 0.62, 0.22);
       }
 
       if (mine) {

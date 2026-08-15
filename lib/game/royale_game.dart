@@ -2630,27 +2630,44 @@ class RoyaleGame extends FlameGame {
       final pos = Offset(c.pos.x, c.pos.y);
       final r = c.radius;
 
-      // grounded shadow — offset down-right like every other shadow on the map
+      // Grounded shadow that reacts to what the operator is doing.
+      //
+      // The light on this map comes from up-left and does not move, so the
+      // shadow always falls down-right — that part is fixed, and changing it
+      // would look wrong. What DOES change is its shape: a body in motion
+      // leans, so the shadow stretches along the direction of travel and
+      // trails slightly behind, and it turns with the operator when they turn
+      // on the spot. Standing still, it settles back to a round pool.
+      final vel = c.vel;
+      final speed = vel.length;
+      final run = (speed / kPlayerSpeed).clamp(0.0, 1.0);
+      // face the shadow along movement when moving, along aim when standing
+      final shadowAngle = speed > 6 ? angleOf(vel) : c.aim;
+      // trails behind the direction of travel
+      final trail = Offset(-math.cos(shadowAngle), -math.sin(shadowAngle)) *
+          (r * 0.16 * run);
+
+      void groundShadow(double w, double h, double dx, double dy, int argb) {
+        canvas.save();
+        canvas.translate(pos.dx + dx + trail.dx, pos.dy + dy + trail.dy);
+        canvas.rotate(shadowAngle);
+        canvas.drawOval(
+            Rect.fromCenter(
+                center: Offset.zero,
+                // stretched along travel, pinched across it
+                width: w * (1 + 0.42 * run),
+                height: h * (1 - 0.16 * run)),
+            _fill..color = Color(argb));
+        canvas.restore();
+      }
+
       if (_q.shadows) {
-        canvas.drawOval(
-            Rect.fromCenter(
-                center: pos.translate(6, r * 0.7),
-                width: r * 2.25,
-                height: r * 0.95),
-            _fill..color = const Color(0x4D000000));
-        canvas.drawOval(
-            Rect.fromCenter(
-                center: pos.translate(3, r * 0.5),
-                width: r * 1.5,
-                height: r * 0.6),
-            _fill..color = const Color(0x3D000000));
+        groundShadow(r * 2.25, r * 0.95, 6, r * 0.7, 0x4D000000);
+        groundShadow(r * 1.5, r * 0.6, 3, r * 0.5, 0x3D000000);
       } else {
         // SMOOTH still needs the figure to sit on the ground, just without a
         // second pass — one flat ellipse instead of a layered soft shadow.
-        canvas.drawOval(
-            Rect.fromCenter(
-                center: pos.translate(2, r * 0.6), width: r * 1.7, height: r * 0.7),
-            _fill..color = const Color(0x33000000));
+        groundShadow(r * 1.7, r * 0.7, 2, r * 0.6, 0x33000000);
       }
 
       // player ground ring

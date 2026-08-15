@@ -256,6 +256,13 @@ class NetClient {
     }
   }
 
+  /// Where a player was in the PREVIOUS snapshot. The renderer uses the
+  /// difference to work out which way someone is travelling, for the shadow.
+  Offset? prevPosOf(int id) {
+    final v = _prevP[id];
+    return v == null ? null : Offset(v[0], v[1]);
+  }
+
   /// Render delay currently in use, for the HUD read-out.
   int get interpMs => _delayMs.round();
 

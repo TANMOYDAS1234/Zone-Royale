@@ -1,7 +1,16 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../game/cloud_code.dart';
 import '../game/profile.dart';
 import '../game/sfx.dart';
 import 'theme.dart';
@@ -14,12 +23,10 @@ import 'theme.dart';
 /// are pages that put the input at the TOP, above where the keyboard opens,
 /// and scroll if they still run out of room.
 
-/// Shows the player their transfer code — the thing RESTORE on another phone
-/// consumes. Copy it, or send it to yourself.
+/// Shows the player a short code and its QR.
 Future<void> showBackupCode(BuildContext context) async {
-  final code = Profile.instance.exportCode();
   await Navigator.of(context).push(MaterialPageRoute<void>(
-    builder: (_) => _BackupCodeScreen(code: code),
+    builder: (_) => const _BackupCodeScreen(),
   ));
 }
 
@@ -111,91 +118,189 @@ void _toast(BuildContext context, String msg, {Color color = ZR.primary}) {
 }
 
 // ------------------------------------------------------------ show code
-class _BackupCodeScreen extends StatelessWidget {
-  final String code;
-  const _BackupCodeScreen({required this.code});
+class _BackupCodeScreen extends StatefulWidget {
+  const _BackupCodeScreen();
+
+  @override
+  State<_BackupCodeScreen> createState() => _BackupCodeScreenState();
+}
+
+class _BackupCodeScreenState extends State<_BackupCodeScreen> {
+  final _qrKey = GlobalKey();
+  String? _code;
+  String? _error;
+  bool _busy = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _make();
+  }
+
+  Future<void> _make() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final code = await CloudCode.upload();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _code = code;
+      _error = code == null
+          ? 'Could not reach the server. Check your connection and try again.'
+          : null;
+    });
+  }
+
+  /// Renders the QR card to a PNG the player can keep or send.
+  Future<File?> _cardFile() async {
+    try {
+      await WidgetsBinding.instance.endOfFrame;
+      final obj = _qrKey.currentContext?.findRenderObject();
+      if (obj is! RenderRepaintBoundary) return null;
+      final img = await obj.toImage(pixelRatio: 3.0);
+      final data = await img.toByteData(format: ui.ImageByteFormat.png);
+      img.dispose();
+      if (data == null) return null;
+      final dir = await getTemporaryDirectory();
+      final f = File('${dir.path}/zone_royale_transfer_$_code.png');
+      await f.writeAsBytes(data.buffer.asUint8List(), flush: true);
+      return f;
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return _page(
       context,
-      title: 'YOUR BACKUP CODE',
-      subtitle: 'THIS IS WHAT "RESTORE" ON ANOTHER PHONE ASKS FOR',
+      title: 'YOUR TRANSFER CODE',
+      subtitle: 'SCAN THIS ON THE NEW PHONE, OR TYPE THE SIX CHARACTERS',
       accent: ZR.secondary,
       children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: ZR.panel(border: ZR.secondary.withValues(alpha: 0.4)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                const Icon(Icons.info_outline, size: 13, color: ZR.secondary),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                      'You do not need this for a normal reinstall — that '
-                      'restores by itself. Keep it for moving to a phone on a '
-                      'different Google account.',
-                      style: ZR.mono(9, color: Colors.white54, spacing: 0.3)),
-                ),
-              ]),
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
+        if (_busy)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 40),
+            child: Center(child: CircularProgressIndicator(color: ZR.primary)),
+          )
+        else if (_error != null) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: ZR.panel(border: ZR.danger.withValues(alpha: 0.5)),
+            child: Row(children: [
+              const Icon(Icons.cloud_off, size: 16, color: ZR.danger),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(_error!,
+                    style: ZR.body(12, color: Colors.white70, height: 1.4)),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          ZrButton(
+              label: 'TRY AGAIN',
+              icon: Icons.refresh,
+              height: 46,
+              fontSize: 20,
+              onTap: _make),
+        ] else ...[
+          Center(
+            child: RepaintBoundary(
+              key: _qrKey,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.white12),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                // selectable, so it can also be picked up by hand
-                child: SelectableText(code,
-                    style: ZR.mono(10, color: Colors.white70, spacing: 0)),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('ZONE ROYALE',
+                        style: ZR.display(20,
+                            color: const Color(0xFF10131A), spacing: 3)),
+                    const SizedBox(height: 8),
+                    // white background on purpose: scanners want maximum
+                    // contrast, and a dark QR on a dark card fails often
+                    QrImageView(
+                      data: CloudCode.payload(_code!),
+                      version: QrVersions.auto,
+                      size: 132,
+                      backgroundColor: Colors.white,
+                      eyeStyle: const QrEyeStyle(
+                          eyeShape: QrEyeShape.square,
+                          color: Color(0xFF10131A)),
+                      dataModuleStyle: const QrDataModuleStyle(
+                          dataModuleShape: QrDataModuleShape.square,
+                          color: Color(0xFF10131A)),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(_code!,
+                        style: TextStyle(
+                          fontFamily: 'Mono',
+                          fontSize: 26,
+                          letterSpacing: 6,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFF10131A),
+                        )),
+                    Text('VALID FOR 48 HOURS',
+                        style: ZR.mono(7,
+                            color: const Color(0xFF6B7280), spacing: 1.4)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ZrButton(
+                  label: 'SAVE IMAGE',
+                  icon: Icons.download,
+                  height: 44,
+                  fontSize: 18,
+                  onTap: () async {
+                    final f = await _cardFile();
+                    if (!context.mounted) return;
+                    if (f == null) {
+                      _toast(context, 'COULD NOT SAVE', color: ZR.danger);
+                      return;
+                    }
+                    // Android blocks a silent write to the gallery, so the
+                    // share sheet is how the player chooses where it lands.
+                    try {
+                      await SharePlus.instance.share(ShareParams(
+                        files: [XFile(f.path, mimeType: 'image/png')],
+                        text: 'Zone Royale transfer code: $_code',
+                      ));
+                    } catch (_) {}
+                  },
+                ),
+              ),
+              const SizedBox(width: 9),
+              Expanded(
+                child: ZrGhostButton(
+                  label: 'COPY CODE',
+                  icon: Icons.copy_all,
+                  height: 44,
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: _code!));
+                    if (context.mounted) _toast(context, 'COPIED');
+                  },
+                ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: ZrButton(
-                label: 'COPY',
-                icon: Icons.copy_all,
-                height: 46,
-                fontSize: 20,
-                onTap: () async {
-                  await Clipboard.setData(ClipboardData(text: code));
-                  if (context.mounted) {
-                    _toast(context, 'COPIED TO CLIPBOARD');
-                  }
-                },
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ZrGhostButton(
-                label: 'SEND TO MYSELF',
-                icon: Icons.ios_share,
-                height: 46,
-                onTap: () async {
-                  try {
-                    await SharePlus.instance.share(ShareParams(
-                      text: 'Zone Royale backup code:\n$code',
-                      subject: 'Zone Royale backup code',
-                    ));
-                  } catch (_) {
-                    if (context.mounted) {
-                      _toast(context, 'COULD NOT OPEN SHARE',
-                          color: ZR.danger);
-                    }
-                  }
-                },
-              ),
-            ),
-          ],
-        ),
+          const SizedBox(height: 10),
+          Text(
+              'You do not need this for a normal reinstall — that restores by '
+              'itself. Use it to move to a phone on a different Google '
+              'account.',
+              style: ZR.mono(8.5, color: Colors.white38, spacing: 0.3)),
+        ],
       ],
     );
   }
@@ -226,22 +331,40 @@ class _RestoreScreenState extends State<_RestoreScreen> {
       if (mounted) _toast(context, 'CLIPBOARD IS EMPTY', color: ZR.danger);
       return;
     }
-    setState(() => _controller.text = text);
+    setState(() => _controller.text = CloudCode.parse(text) ?? text);
     Sfx.tap();
+  }
+
+  Future<void> _scan() async {
+    final code = await Navigator.of(context).push<String>(
+        MaterialPageRoute<String>(builder: (_) => const _ScanScreen()));
+    if (code == null || !mounted) return;
+    setState(() => _controller.text = code);
+    _restore();
   }
 
   Future<void> _restore() async {
     if (_busy) return;
     setState(() => _busy = true);
-    final ok = await Profile.instance.importCode(_controller.text);
+    // A six-character code goes to the server; anything longer is a raw
+    // backup blob from the old flow, which still works.
+    final raw = _controller.text.trim();
+    final String? err;
+    if (raw.length <= 12) {
+      err = await CloudCode.restore(raw);
+    } else {
+      err = await Profile.instance.importCode(raw)
+          ? null
+          : "That code didn't look right.";
+    }
     if (!mounted) return;
     setState(() => _busy = false);
-    if (ok) {
+    if (err == null) {
       Sfx.buy();
       Navigator.of(context).pop(true);
     } else {
       Sfx.deny();
-      _toast(context, "THAT CODE DIDN'T LOOK RIGHT", color: ZR.danger);
+      _toast(context, err.toUpperCase(), color: ZR.danger);
     }
   }
 
@@ -251,29 +374,52 @@ class _RestoreScreenState extends State<_RestoreScreen> {
     return _page(
       context,
       title: 'RESTORE PROGRESS',
-      subtitle: 'PASTE THE BACKUP CODE FROM YOUR OTHER DEVICE',
+      subtitle: 'SCAN THE QR ON YOUR OLD PHONE, OR TYPE ITS SIX CHARACTERS',
       accent: ZR.primary,
       children: [
-        // PASTE first, and prominent: almost nobody types one of these by hand
-        ZrButton(
-          label: 'PASTE FROM CLIPBOARD',
-          icon: Icons.content_paste,
-          height: 46,
-          fontSize: 20,
-          onTap: _paste,
+        Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: ZrButton(
+                label: 'SCAN QR CODE',
+                icon: Icons.qr_code_scanner,
+                height: 46,
+                fontSize: 19,
+                onTap: _scan,
+              ),
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: ZrGhostButton(
+                label: 'PASTE',
+                icon: Icons.content_paste,
+                height: 46,
+                onTap: _paste,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
-        Text('OR TYPE IT IN', style: ZR.mono(8, color: Colors.white38)),
+        const SizedBox(height: 12),
+        Text('OR TYPE THE CODE', style: ZR.mono(8, color: Colors.white38)),
         const SizedBox(height: 5),
         TextField(
           controller: _controller,
-          maxLines: 3,
-          minLines: 3,
+          textCapitalization: TextCapitalization.characters,
           onChanged: (_) => setState(() {}),
-          style: ZR.mono(10, color: Colors.white),
+          style: TextStyle(
+            fontFamily: 'Mono',
+            fontSize: 24,
+            letterSpacing: 8,
+            color: Colors.white,
+          ),
           decoration: InputDecoration(
-            hintText: 'ZR1-…',
-            hintStyle: ZR.mono(10, color: Colors.white24),
+            hintText: 'A1B2C3',
+            hintStyle: TextStyle(
+                fontFamily: 'Mono',
+                fontSize: 24,
+                letterSpacing: 8,
+                color: Colors.white24),
             filled: true,
             fillColor: Colors.black.withValues(alpha: 0.4),
             enabledBorder: OutlineInputBorder(
@@ -287,7 +433,7 @@ class _RestoreScreenState extends State<_RestoreScreen> {
         const SizedBox(height: 10),
         Text(
             'Restoring replaces the progress on THIS device with the progress '
-            'in the code.',
+            'behind the code.',
             style: ZR.mono(8.5, color: Colors.white38, spacing: 0.3)),
         const SizedBox(height: 12),
         ZrButton(
@@ -298,6 +444,139 @@ class _RestoreScreenState extends State<_RestoreScreen> {
           onTap: has && !_busy ? _restore : null,
         ),
       ],
+    );
+  }
+}
+
+/// Camera scanner, with a gallery fallback for a screenshot of the QR.
+class _ScanScreen extends StatefulWidget {
+  const _ScanScreen();
+
+  @override
+  State<_ScanScreen> createState() => _ScanScreenState();
+}
+
+class _ScanScreenState extends State<_ScanScreen> {
+  final MobileScannerController _c = MobileScannerController();
+  bool _done = false;
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  void _found(String raw) {
+    if (_done) return;
+    final code = CloudCode.parse(raw);
+    if (code == null) return;
+    _done = true;
+    Sfx.buy();
+    Navigator.of(context).pop(code);
+  }
+
+  Future<void> _fromGallery() async {
+    try {
+      final file = await ImagePicker().pickImage(source: ImageSource.gallery);
+      if (file == null) return;
+      final result = await _c.analyzeImage(file.path);
+      final codes = result?.barcodes ?? const [];
+      if (codes.isEmpty) {
+        if (mounted) {
+          _toast(context, 'NO QR CODE IN THAT IMAGE', color: ZR.danger);
+        }
+        return;
+      }
+      _found(codes.first.rawValue ?? '');
+    } catch (_) {
+      if (mounted) _toast(context, 'COULD NOT READ THAT IMAGE', color: ZR.danger);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          MobileScanner(
+            controller: _c,
+            onDetect: (capture) {
+              for (final b in capture.barcodes) {
+                final v = b.rawValue;
+                if (v != null && v.isNotEmpty) {
+                  _found(v);
+                  return;
+                }
+              }
+            },
+          ),
+          // a reticle, so it is obvious where to point the phone
+          IgnorePointer(
+            child: Center(
+              child: Container(
+                width: 210,
+                height: 210,
+                decoration: BoxDecoration(
+                  border: Border.all(color: ZR.primary, width: 2),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        Sfx.back();
+                        Navigator.of(context).maybePop();
+                      },
+                      behavior: HitTestBehavior.opaque,
+                      child: const SizedBox(
+                          width: 52,
+                          height: 46,
+                          child: Icon(Icons.arrow_back,
+                              color: Colors.white, size: 22)),
+                    ),
+                    Text('POINT AT THE QR CODE',
+                        style: ZR.display(20, spacing: 1.4)),
+                  ],
+                ),
+                const Spacer(),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ZrGhostButton(
+                          label: 'PICK FROM GALLERY',
+                          icon: Icons.photo_library_outlined,
+                          height: 44,
+                          onTap: _fromGallery,
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      SizedBox(
+                        width: 56,
+                        child: ZrGhostButton(
+                          label: '',
+                          icon: Icons.flashlight_on,
+                          height: 44,
+                          onTap: () => _c.toggleTorch(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

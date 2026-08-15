@@ -1471,13 +1471,16 @@ void drawOperatorTile(
   // frame: shift down a touch so the upward-pointing gun stays in the tile
   final centre = c.translate(0, box.height * (0.10 + headBias));
 
-  // grounded shadow, matching the map's light direction
+  // Grounded shadow, matching the map's light direction — and turning with
+  // the operator, so spinning them in the lobby swings the shadow round with
+  // the body instead of leaving it stuck facing one way.
+  canvas.save();
+  canvas.translate(centre.dx + r * 0.28, centre.dy + r * 0.85);
+  canvas.rotate(turn);
   canvas.drawOval(
-      Rect.fromCenter(
-          center: centre.translate(r * 0.28, r * 0.85),
-          width: r * 2.3,
-          height: r * 0.9),
+      Rect.fromCenter(center: Offset.zero, width: r * 2.3, height: r * 0.9),
       fill..color = const Color(0x55000000));
+  canvas.restore();
 
   // -pi/2 = facing the top of the tile, plus whatever spin the player applied
   final face = -math.pi / 2 + turn;

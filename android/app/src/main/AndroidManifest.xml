@@ -2,6 +2,11 @@
     <!-- Required for online multiplayer (WebSocket to the game server). Release
          builds do NOT inherit this from the debug manifest, so it must be here. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Scanning a transfer QR on the new phone. Requested at the moment the
+         scanner opens, never at launch, and the flow has a gallery fallback
+         for anyone who declines. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="Zone Royale"
         android:name="${applicationName}"
