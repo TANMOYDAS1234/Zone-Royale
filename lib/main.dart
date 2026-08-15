@@ -12,8 +12,6 @@ import 'ui/brand.dart';
 import 'ui/game_ui.dart';
 
 import 'ui/lobby_screen.dart';
-import 'ui/tutorial.dart';
-import 'ui/tutorial_script.dart';
 import 'ui/missions_screen.dart';
 import 'ui/profile_screen.dart';
 import 'ui/shop_screen.dart';
@@ -125,19 +123,6 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     // screen and stops the moment a match starts, and each change gets a
     // whoosh under it so moving between screens feels like movement.
     game.screen.addListener(_onScreenChanged);
-    // The tour drives the app: a step that explains a screen puts the player
-    // on that screen first.
-    Tutorial.instance.navigator = (screen) => game.screen.value = screen;
-  }
-
-  /// Begin the guided tour, if this install has never seen it.
-  void _maybeStartTutorial() {
-    if (Profile.instance.tutorialDone || Tutorial.instance.running) return;
-    // one frame, so the lobby's anchors have reported their rects
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || Profile.instance.tutorialDone) return;
-      Tutorial.instance.start(fullTutorial());
-    });
   }
 
   void _onScreenChanged() {
@@ -147,11 +132,6 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
     } else {
       Sfx.whoosh(vol: 0.35);
       Sfx.startMenuMusic();
-    }
-    // the tour follows the player into the match and onto the results card
-    if (Tutorial.instance.running && (s == Screen.playing || s == Screen.end)) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => Tutorial.instance.jumpToScreen(s));
     }
   }
 
@@ -279,7 +259,6 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                   },
                 ),
               ),
-              const TutorialOverlay(),
               if (_showSplash)
                 Positioned.fill(
                   child: SplashScreen(
@@ -288,7 +267,6 @@ class _GamePageState extends State<GamePage> with WidgetsBindingObserver {
                       // the bed starts as the front end appears, not over the
                       // splash — the first thing you hear should be the menu
                       Sfx.startMenuMusic();
-                      _maybeStartTutorial();
                     },
                   ),
                 ),

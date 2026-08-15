@@ -48,9 +48,6 @@ class Profile {
   /// many permanent marks stay on the ground — the dial to turn if the game
   /// ever feels like it is stuttering on your phone.
   int quality = 1;
-  /// False until the guided tour has run, been skipped, or arrived with a
-  /// restored profile — a returning player should never be taught again.
-  bool tutorialDone = false;
   /// Id of the worn player title (see game/titles.dart). Empty = auto-pick
   /// the best one unlocked.
   String title = '';
@@ -342,7 +339,6 @@ class Profile {
       orientation = (p.getInt('orientation') ?? 0).clamp(0, 2);
       shake = (p.getDouble('shake') ?? 0.5).clamp(0.0, 1.0);
       quality = (p.getInt('quality') ?? 1).clamp(0, kQualities.length - 1);
-      tutorialDone = p.getBool('tutorialDone') ?? false;
       title = p.getString('title') ?? '';
       musicVolume = (p.getDouble('musicVol') ?? 0.5).clamp(0.0, 1.0);
       sfxVolume = (p.getDouble('sfxVol') ?? 0.9).clamp(0.0, 1.0);
@@ -430,7 +426,6 @@ class Profile {
       await p.setInt('orientation', orientation);
       await p.setDouble('shake', shake);
       await p.setInt('quality', quality);
-      await p.setBool('tutorialDone', tutorialDone);
       await p.setString('title', title);
       await p.setDouble('musicVol', musicVolume);
       await p.setDouble('sfxVol', sfxVolume);
@@ -558,8 +553,6 @@ class Profile {
     if (w >= 0 && w < WeaponId.values.length) startWeapon = WeaponId.values[w];
     hero = i('hero', hero).clamp(0, kHeroes.length - 1);
     wearEvolved = b('wearEvolved', wearEvolved);
-    // a restored profile belongs to someone who already knows the game
-    tutorialDone = true;
 
     fireAuto = b('fireAuto', fireAuto);
     autoSwapWeapons = b('autoSwap', autoSwapWeapons);

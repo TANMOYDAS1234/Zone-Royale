@@ -14,7 +14,6 @@ import 'capture.dart';
 import 'hud_controls.dart';
 import 'result_screen.dart';
 import 'theme.dart';
-import 'tutorial.dart';
 
 /// Page padding that keeps menu content in a readable centred column instead
 /// of stretching one thin list across a 20:9 landscape screen.
@@ -1762,27 +1761,21 @@ class EndOverlay extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: TutorialAnchor(
-            id: 'end.share',
-            child: ZrGhostButton(
-                label: 'SHARE',
-                icon: Icons.ios_share,
-                height: 46,
-                color: ZR.secondary,
-                onTap: () => _shareShot(context)),
-          ),
+          child: ZrGhostButton(
+              label: 'SHARE',
+              icon: Icons.ios_share,
+              height: 46,
+              color: ZR.secondary,
+              onTap: () => _shareShot(context)),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: TutorialAnchor(
-            id: 'end.home',
-            child: ZrGhostButton(
-                label: 'HOME',
-                icon: Icons.home_rounded,
-                height: 46,
-                color: Colors.white54,
-                onTap: game.goHome),
-          ),
+          child: ZrGhostButton(
+              label: 'HOME',
+              icon: Icons.home_rounded,
+              height: 46,
+              color: Colors.white54,
+              onTap: game.goHome),
         ),
         if (!won && game.aliveCount > 1) ...[
           const SizedBox(width: 10),
