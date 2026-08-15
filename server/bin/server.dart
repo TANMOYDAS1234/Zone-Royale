@@ -30,7 +30,16 @@ import 'dart:io';
 import 'dart:math';
 
 const double worldSize = 3200;
-const int tickHz = 30; // simulation + snapshot rate
+const int tickHz = 30; // simulation rate
+/// Send a snapshot every Nth tick — 30Hz sim, 15Hz on the wire.
+///
+/// Building the packed player/loot/wall lists and JSON-encoding them is by far
+/// the most expensive thing this server does per tick, and on a small shared
+/// instance it saturates the isolate: the `pong` reply then sits in the queue
+/// behind it and the client reports a "ping" of seconds. Halving the send rate
+/// halves that cost, and the client interpolates across the wider gap without
+/// any visible difference (see NetClient._avgGap, which adapts to it).
+const int snapshotEvery = 2;
 const double playerSpeed = 250;
 const double hitRadius = 22;
 const double nadeSpeed = 560;
@@ -286,7 +295,10 @@ class Room {
   bool allowGrenades = true;
   bool allowSkills = true;
   bool fillBots = true; // top the room up with bots so it's always playable
-  int botTarget = 8; // total bodies (humans + bots) to aim for
+  /// Total bodies (humans + bots). Every bot costs AI, physics and a slot in
+  /// every snapshot, so this is the cheapest dial there is when the host is
+  /// running on a small instance. The room stays a real fight at six.
+  int botTarget = 6;
   int botDifficulty = 1; // 0 easy · 1 normal · 2 hard — all weaker than a human
 
   // ---- per-tick event queues (flushed with the snapshot) ----
@@ -1335,11 +1347,15 @@ class Room {
   /// Layout: [id, x, y, aim*100, hp, flags, kills, wins, wi, otherWi, nades,
   ///          cd, ammo]
   /// flags: 1 alive · 2 ready · 4 shield · 8 dash · 16 bot · 32 reloading
+  int _tickCount = 0;
+
   void _broadcastState() {
+    // roster changes always go out immediately; world state is rate-limited
     if (_rosterDirty) {
       _rosterDirty = false;
       broadcast(rosterMsg);
     }
+    if (++_tickCount % snapshotEvery != 0) return;
     final ps = <List<int>>[];
     for (final p in players) {
       var flags = 0;

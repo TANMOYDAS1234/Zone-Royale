@@ -189,15 +189,38 @@ class NetClient {
   final Map<int, List<double>> _currP = {};
   int _prevAt = 0, _currAt = 0;
 
-  /// Interpolated [x, y, aim] for a player, or null if unknown. Renders
-  /// [kInterpDelayMs] in the past so a late packet doesn't cause a hitch.
+  /// Smoothed gap between arriving snapshots, in ms.
+  ///
+  /// The server ticks at a fixed 30Hz, but that is not how the packets ARRIVE.
+  /// On a long link they bunch up and then gap out, and the raw last-gap was
+  /// being used both as the lerp span and as the buffer depth. A burst gave a
+  /// tiny span (a violent snap), a gap starved the buffer (a freeze). That is
+  /// exactly what "my friend's character isn't moving" looks like from the
+  /// other side of a 250ms connection.
+  double _avgGap = 33;
+
+  /// Worst recent gap, decayed. Drives how far behind we render.
+  double _jitter = 0;
+
+  /// How far in the past to render. Deep enough to cover the jitter actually
+  /// being observed, never less than the old fixed value, and capped so a bad
+  /// spike cannot push everyone half a second into the past.
+  double get _delayMs => (_avgGap + _jitter * 1.6).clamp(90.0, 260.0);
+
+  /// Interpolated [x, y, aim] for a player, or null if unknown.
   List<double>? lerpOf(int id) {
     final cur = _currP[id];
     if (cur == null) return null;
     final pv = _prevP[id] ?? cur;
-    final span = (_currAt - _prevAt).clamp(1, 400);
-    final renderAt = DateTime.now().millisecondsSinceEpoch - kInterpDelayMs;
-    final t = ((renderAt - _prevAt) / span).clamp(0.0, 1.35);
+    // Interpolate across the SMOOTHED interval, not the raw one, so a burst of
+    // two packets in the same millisecond doesn't teleport anyone.
+    final span = _avgGap.clamp(16.0, 400.0);
+    final renderAt = DateTime.now().millisecondsSinceEpoch - _delayMs;
+    // Past 1.0 this is extrapolation — carrying the last known velocity for a
+    // short way. Better than freezing: a player who keeps walking keeps
+    // walking, and the next snapshot corrects them. Capped tightly so nobody
+    // slides through a wall while the network catches up.
+    final t = ((renderAt - _prevAt) / span).clamp(0.0, 1.8);
     double a = pv[2], b = cur[2];
     var d = b - a;
     while (d > math.pi) {
@@ -215,6 +238,13 @@ class NetClient {
 
   void _recordSnapshot() {
     final now = DateTime.now().millisecondsSinceEpoch;
+    if (_currAt != 0) {
+      final gap = (now - _currAt).toDouble().clamp(1.0, 500.0);
+      // fast to widen, slow to narrow: react to trouble at once, relax gently
+      _avgGap += (gap - _avgGap) * 0.12;
+      final over = (gap - _avgGap).clamp(0.0, 400.0);
+      _jitter = over > _jitter ? over : _jitter + (over - _jitter) * 0.05;
+    }
     _prevAt = _currAt == 0 ? now - 33 : _currAt;
     _currAt = now;
     _prevP
@@ -225,6 +255,9 @@ class NetClient {
       _currP[p.id] = [p.x, p.y, p.aim];
     }
   }
+
+  /// Render delay currently in use, for the HUD read-out.
+  int get interpMs => _delayMs.round();
 
   Map<String, dynamic>? _joinConfig;
   int _hero = 0;

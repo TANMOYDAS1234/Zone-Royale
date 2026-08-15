@@ -305,7 +305,11 @@ class Profile {
     try {
       final p = await SharedPreferences.getInstance();
       _prefs = p;
-      name = p.getString('name') ?? 'You';
+      // A default of "You" meant every player in an online room was labelled
+      // "You" — you could not tell yourself from your friend. New profiles get
+      // a distinct callsign instead; existing ones keep whatever they chose.
+      name = p.getString('name') ??
+          'OPERATOR-${(DateTime.now().microsecondsSinceEpoch % 9000) + 1000}';
       outfit = p.getInt('outfit') ?? 0;
       skin = p.getInt('skin') ?? 0;
       accessory = p.getInt('accessory') ?? 0;

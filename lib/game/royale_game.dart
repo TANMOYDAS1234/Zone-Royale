@@ -2133,11 +2133,40 @@ class RoyaleGame extends FlameGame {
       if (bushes) {
         final c = r.center;
         final rad = r.width / 2;
+        // Canopy goes see-through the moment anyone is under it.
+        //
+        // A tree you cannot see into is a tree three people are hiding in, and
+        // from outside it looks identical to an empty one. Fading the crown
+        // keeps concealment meaningful — you still cannot be shot through it,
+        // and you still break line of sight — while letting the fight stay
+        // readable instead of turning into guesswork.
+        var hiding = false;
+        for (final ch in chars) {
+          if (ch.alive && o.contains(ch.pos.x, ch.pos.y)) {
+            hiding = true;
+            break;
+          }
+        }
+        // your own bush stays denser than someone else's, so hiding still
+        // feels like hiding
+        final k = hiding ? 0.34 : 1.0;
+        Color veil(int argb) {
+          final base = Color(argb);
+          return base.withValues(alpha: base.a * k);
+        }
+
         // long soft shadow, cast the same way as every other object
         canvas.drawOval(
             Rect.fromCenter(
                 center: c.translate(7, 11), width: rad * 2.2, height: rad * 1.5),
-            _fill..color = const Color(0x55000000));
+            _fill..color = veil(0x55000000));
+        if (hiding) {
+          // a dashed rim so the tree still reads as cover when it is faded
+          _stroke
+            ..color = const Color(0xFF7FE8FF).withValues(alpha: 0.5)
+            ..strokeWidth = 1.6;
+          canvas.drawCircle(c.translate(0, -rad * 0.2), rad * 1.05, _stroke);
+        }
         if (theme == 'FOREST') {
           // proper tree: trunk, three canopy layers, sun-lit crown
           canvas.drawRRect(
@@ -2147,23 +2176,23 @@ class RoyaleGame extends FlameGame {
                       width: rad * 0.34,
                       height: rad * 0.95),
                   Radius.circular(rad * 0.12)),
-              _fill..color = const Color(0xFF4A3320));
+              _fill..color = veil(0xFF4A3320));
           canvas.drawCircle(c.translate(0, -rad * 0.2), rad * 1.05,
-              _fill..color = const Color(0xFF0E3418));
+              _fill..color = veil(0xFF0E3418));
           canvas.drawCircle(c.translate(-rad * 0.08, -rad * 0.3), rad * 0.84,
-              _fill..color = const Color(0xFF1E6B32));
+              _fill..color = veil(0xFF1E6B32));
           canvas.drawCircle(c.translate(-rad * 0.28, -rad * 0.48), rad * 0.46,
-              _fill..color = const Color(0xAA3ECC66));
+              _fill..color = veil(0xAA3ECC66));
           canvas.drawCircle(c.translate(-rad * 0.4, -rad * 0.6), rad * 0.2,
-              _fill..color = const Color(0x88A8F08A));
+              _fill..color = veil(0x88A8F08A));
         } else {
-          canvas.drawCircle(c, rad, _fill..color = const Color(0x88102F16));
+          canvas.drawCircle(c, rad, _fill..color = veil(0x88102F16));
           canvas.drawCircle(c.translate(-rad * 0.06, -rad * 0.08), rad * 0.78,
-              _fill..color = const Color(0xE01F6B34));
+              _fill..color = veil(0xE01F6B34));
           canvas.drawCircle(c.translate(-rad * 0.25, -rad * 0.28), rad * 0.42,
-              _fill..color = const Color(0x772FB85A));
+              _fill..color = veil(0x772FB85A));
           canvas.drawCircle(c.translate(-rad * 0.36, -rad * 0.4), rad * 0.18,
-              _fill..color = const Color(0x66A8F08A));
+              _fill..color = veil(0x66A8F08A));
         }
         continue;
       }

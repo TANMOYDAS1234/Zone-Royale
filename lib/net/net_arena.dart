@@ -2559,17 +2559,46 @@ class _ArenaPainter extends CustomPainter {
       if (!vis(o.x, o.y, o.w)) continue;
       final centre = Offset(o.x, o.y);
       final rad = o.w / 2;
+      // Same rule as the solo match: a canopy with someone under it turns
+      // see-through, so a bush fight stays readable. Concealment still works —
+      // you cannot be shot through it — it just stops being invisible.
+      var hiding = false;
+      for (final p in c.players) {
+        if (!p.alive) continue;
+        final pos = _pos[p.id] ?? Offset(p.x, p.y);
+        if (pos.dx >= o.x - rad &&
+            pos.dx <= o.x + rad &&
+            pos.dy >= o.y - rad &&
+            pos.dy <= o.y + rad) {
+          hiding = true;
+          break;
+        }
+      }
+      final k = hiding ? 0.34 : 1.0;
+      Color veil(int argb) {
+        final base = Color(argb);
+        return base.withValues(alpha: base.a * k);
+      }
+
       canvas.drawOval(
           Rect.fromCenter(
               center: centre.translate(6, 9),
               width: rad * 2.1,
               height: rad * 1.4),
-          _fill..color = Colors.black.withValues(alpha: 0.3));
-      canvas.drawCircle(centre, rad, _fill..color = const Color(0xCC123F1E));
+          _fill..color = Colors.black.withValues(alpha: 0.3 * k));
+      if (hiding) {
+        canvas.drawCircle(
+            centre,
+            rad,
+            _stroke
+              ..color = ZR.tertiary.withValues(alpha: 0.5)
+              ..strokeWidth = 1.6);
+      }
+      canvas.drawCircle(centre, rad, _fill..color = veil(0xCC123F1E));
       canvas.drawCircle(centre.translate(-rad * 0.2, -rad * 0.2), rad * 0.75,
-          _fill..color = const Color(0xCC1F6B34));
+          _fill..color = veil(0xCC1F6B34));
       canvas.drawCircle(centre.translate(-rad * 0.34, -rad * 0.36), rad * 0.36,
-          _fill..color = const Color(0x662FB85A));
+          _fill..color = veil(0x662FB85A));
     }
   }
 
