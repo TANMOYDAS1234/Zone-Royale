@@ -23,6 +23,12 @@ class Profile {
   bool fireAuto = true; // prefer auto fire when the weapon supports it
   int matchMode = 0; // index into kMatchModes
   int hero = 0; // index into kHeroes
+  /// True when the hero's EVOLVED form is the one being worn. Distinct from
+  /// heroEvolved(i), which asks whether you OWN that evolution. An evolution
+  /// that changes nothing you can see is not worth buying, so this drives a
+  /// real visual difference — and it keeps the base hero and its top form
+  /// from both claiming to be equipped at the same time.
+  bool wearEvolved = false;
   int mapChoice = 0; // 0 = random each match; otherwise kMapThemes[mapChoice - 1]
   int difficulty = 1; // index into kDifficulties (1 = NORMAL)
 
@@ -326,6 +332,7 @@ class Profile {
       fireAuto = p.getBool('fireAuto') ?? true;
       matchMode = p.getInt('matchMode') ?? 0;
       hero = p.getInt('hero') ?? 0;
+      wearEvolved = p.getBool('wearEvolved') ?? false;
       mapChoice = p.getInt('mapChoice') ?? 0;
       difficulty = (p.getInt('difficulty') ?? 1).clamp(0, kDifficulties.length - 1);
       autoSwapWeapons = p.getBool('autoSwap') ?? false;
@@ -412,6 +419,7 @@ class Profile {
       await p.setBool('fireAuto', fireAuto);
       await p.setInt('matchMode', matchMode);
       await p.setInt('hero', hero);
+      await p.setBool('wearEvolved', wearEvolved);
       await p.setInt('mapChoice', mapChoice);
       await p.setInt('difficulty', difficulty);
       await p.setBool('autoSwap', autoSwapWeapons);
@@ -477,6 +485,7 @@ class Profile {
         'accessory': accessory,
         'weapon': startWeapon.index,
         'hero': hero,
+        'wearEvolved': wearEvolved,
         // settings — every one of them, for solo and online alike
         'fireAuto': fireAuto,
         'autoSwap': autoSwapWeapons,
@@ -543,6 +552,7 @@ class Profile {
     final w = i('weapon', startWeapon.index);
     if (w >= 0 && w < WeaponId.values.length) startWeapon = WeaponId.values[w];
     hero = i('hero', hero).clamp(0, kHeroes.length - 1);
+    wearEvolved = b('wearEvolved', wearEvolved);
 
     fireAuto = b('fireAuto', fireAuto);
     autoSwapWeapons = b('autoSwap', autoSwapWeapons);

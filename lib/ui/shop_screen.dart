@@ -95,11 +95,14 @@ class _ShopScreenState extends State<ShopScreen> {
         break;
       case 'h':
         p.hero = n;
+        p.wearEvolved = false; // picking the base form drops the evolution
         break;
       case 'e':
-        // An evolution is a hero's top form, so equipping it equips that
-        // hero. Without this case the tile did nothing at all when tapped.
+        // An evolution is a hero's top form: it equips that hero AND marks
+        // the evolved look, which is what makes it visibly different in the
+        // lobby and in a match.
         p.hero = n;
+        p.wearEvolved = true;
         break;
     }
     p.save();
@@ -384,11 +387,11 @@ class _ShopScreenState extends State<ShopScreen> {
       case 'w':
         return p.startWeapon.index == n;
       case 'h':
-        return p.hero == n;
+        // the BASE hero is equipped only when the evolved form is not — one
+        // choice, one highlighted tile
+        return p.hero == n && !p.wearEvolved;
       case 'e':
-        // shown as equipped only when you own the evolution AND that hero is
-        // the one you are actually taking into a match
-        return p.owns(id) && p.hero == n;
+        return p.owns(id) && p.hero == n && p.wearEvolved;
       default:
         return false;
     }

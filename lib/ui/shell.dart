@@ -348,6 +348,7 @@ class ZrOperatorStage extends StatelessWidget {
                 hero: p.hero,
                 accent: Color(hero.color),
                 turn: turn,
+                evolved: p.wearEvolved && p.owns('e${p.hero}'),
               ),
             ),
           ),
@@ -469,6 +470,8 @@ class OperatorStagePainter extends CustomPainter {
   final WeaponId weapon;
   /// Spin applied by dragging the stage.
   final double turn;
+  /// Whether the hero's evolved form is worn.
+  final bool evolved;
   OperatorStagePainter({
     required this.outfit,
     required this.skin,
@@ -477,6 +480,7 @@ class OperatorStagePainter extends CustomPainter {
     required this.hero,
     required this.accent,
     this.turn = 0,
+    this.evolved = false,
   });
 
   @override
@@ -490,12 +494,19 @@ class OperatorStagePainter extends CustomPainter {
         glow: accent,
         // the drag spin: the operator turns in place
         turn: turn,
+        // The lobby card says VEST + HELMET, so the operator wears them. The
+        // art was ignoring both, which is why the badge and the character
+        // disagreed with each other.
+        vest: true,
+        helmet: true,
+        evolved: evolved,
         zoom: 0.9);
   }
 
   @override
   bool shouldRepaint(covariant OperatorStagePainter old) =>
       old.turn != turn ||
+      old.evolved != evolved ||
       old.outfit != outfit ||
       old.skin != skin ||
       old.accessory != accessory ||

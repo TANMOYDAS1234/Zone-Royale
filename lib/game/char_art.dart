@@ -1443,6 +1443,9 @@ void drawOperatorTile(
   /// Spin, in radians, added to the facing. The lobby drives this from a drag
   /// so the player can turn their operator and look at the gear.
   double turn = 0,
+  /// Draw the hero's evolved form: a gold aura and a rim of light. An
+  /// evolution you cannot see is an evolution nobody buys twice.
+  bool evolved = false,
 }) {
   final fill = Paint()..style = PaintingStyle.fill;
   final stroke = Paint()..style = PaintingStyle.stroke;
@@ -1482,6 +1485,24 @@ void drawOperatorTile(
       fill..color = const Color(0x55000000));
   canvas.restore();
 
+  // evolved: a warm ground aura under the operator, before they are drawn
+  if (evolved) {
+    canvas.drawCircle(
+        centre,
+        r * 1.5,
+        fill
+          ..shader = Gradient.radial(centre, r * 1.5, [
+            const Color(0x66FFD36B),
+            const Color(0x22FFB02E),
+            const Color(0x00000000),
+          ], [
+            0.0,
+            0.55,
+            1.0
+          ]));
+    fill.shader = null;
+  }
+
   // -pi/2 = facing the top of the tile, plus whatever spin the player applied
   final face = -math.pi / 2 + turn;
   drawOperator(canvas, centre, r, face, face, outfit, skin,
@@ -1491,5 +1512,22 @@ void drawOperatorTile(
       hero: hero,
       vest: vest,
       helmet: helmet);
+
+  // evolved: a bright rim around the silhouette and a pair of crest marks
+  if (evolved) {
+    canvas.drawCircle(
+        centre,
+        r * 1.06,
+        stroke
+          ..color = const Color(0xFFFFD36B).withValues(alpha: 0.85)
+          ..strokeWidth = r * 0.055);
+    for (final sgn in const [-1.0, 1.0]) {
+      final a = face + sgn * 0.85;
+      canvas.drawCircle(
+          centre + Offset(math.cos(a), math.sin(a)) * (r * 1.06),
+          r * 0.11,
+          fill..color = const Color(0xFFFFD36B));
+    }
+  }
   canvas.restore();
 }

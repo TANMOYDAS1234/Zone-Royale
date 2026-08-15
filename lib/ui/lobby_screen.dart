@@ -41,7 +41,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   String _look() {
     final p = Profile.instance;
-    return '${p.outfit}-${p.skin}-${p.accessory}-${p.hero}-${p.startWeapon.index}';
+    return '${p.outfit}-${p.skin}-${p.accessory}-${p.hero}-'
+        '${p.startWeapon.index}-${p.wearEvolved}';
   }
 
   void _drop() {
@@ -553,8 +554,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
               children: [
                 _tag(Icons.gps_fixed, kWeapons[p.startWeapon]!.name),
                 const SizedBox(width: 6),
-                _tag(Icons.bolt,
-                    kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name),
+                _tag(
+                    Icons.bolt,
+                    p.wearEvolved && p.owns('e${p.hero}')
+                        ? '${kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name} ★ TOP FORM'
+                        : kHeroes[p.hero.clamp(0, kHeroes.length - 1)].name),
                 const Spacer(),
                 _tag(Icons.shield_outlined, 'VEST + HELMET'),
               ],
@@ -750,6 +754,7 @@ class _AvatarPainter extends CustomPainter {
       headBias: 0.10,
       vest: true,
       helmet: true,
+      evolved: p.wearEvolved && p.owns('e${p.hero}'),
     );
   }
 
