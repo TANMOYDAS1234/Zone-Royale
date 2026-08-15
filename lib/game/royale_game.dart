@@ -2686,40 +2686,86 @@ class RoyaleGame extends FlameGame {
       final moveAim = moving ? angleOf(c.vel) : c.aim;
       final walk = moving ? math.sin(_time * 11 + c.id * 1.7) : 0.0;
       // The evolved aura belongs in the match too — the whole point of buying
-      // a top form is that other players see it. Same live light as the
-      // lobby: it breathes, the rim sweeps, embers lift off.
+      // a top form is that other players see it. This mirrors the lobby
+      // exactly: ground pool, three blurred passes, a rim along the lit edge
+      // and embers lifting off. Blur radii scale with the operator so it
+      // looks identical at any camera zoom instead of thinning out.
       final evolved = c == player &&
           Profile.instance.wearEvolved &&
           Profile.instance.owns('e${Profile.instance.hero}');
-      if (evolved && _q.bloom > 0) {
+      if (evolved) {
         final beat = 0.80 +
             0.20 * math.sin(_time * 1.55) +
             0.07 * math.sin(_time * 4.1 + 0.6);
+        final breath = 0.82 +
+            0.18 * math.sin(_time * 1.35) +
+            0.05 * math.sin(_time * 3.7 + 1.1);
+
+        // warm pool on the ground
+        final poolR = r * 2.4 * (0.94 + 0.10 * breath);
+        canvas.drawCircle(
+            pos,
+            poolR,
+            _fill
+              ..shader = Gradient.radial(pos, poolR, [
+                const Color(0x4DFFD36B),
+                const Color(0x26FFB02E),
+                const Color(0x0DFF8A00),
+                const Color(0x00000000),
+              ], [
+                0.0,
+                0.42,
+                0.72,
+                1.0
+              ]));
+        _fill.shader = null;
+
         for (final pass in const [
-          [1.55, 0.11, 20.0],
-          [1.25, 0.15, 11.0],
-          [1.06, 0.20, 5.0],
+          [1.7, 0.16],
+          [1.34, 0.20],
+          [1.08, 0.26],
         ]) {
           canvas.drawCircle(
               pos,
               r * pass[0] * (0.97 + 0.05 * beat),
               Paint()
                 ..maskFilter = MaskFilter.blur(
-                    BlurStyle.normal, pass[2] * (0.85 + 0.3 * beat))
+                    BlurStyle.normal, r * 0.45 * pass[0] * (0.85 + 0.3 * beat))
                 ..color = const Color(0xFFFFC24B)
                     .withValues(alpha: pass[1] * (0.7 + 0.55 * beat)));
         }
-        for (var i = 0; i < 6; i++) {
-          final phase = ((_time * 0.42) + i / 6.0) % 1.0;
-          final a = c.aim - 1.2 + i * 0.48 + math.sin(_time * 0.7 + i) * 0.12;
-          final d = r * (1.05 + phase * 0.7);
+
+        // rim light along the side the map is lit from
+        canvas.save();
+        canvas.translate(pos.dx, pos.dy);
+        canvas.rotate(-2.35 + 0.22 * math.sin(_time * 0.9));
+        canvas.drawArc(
+            Rect.fromCircle(center: Offset.zero, radius: r * 1.02),
+            -0.9,
+            1.8,
+            false,
+            Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeCap = StrokeCap.round
+              ..strokeWidth = r * 0.10
+              ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.11)
+              ..color = const Color(0xFFFFF0C4)
+                  .withValues(alpha: 0.45 + 0.35 * beat));
+        canvas.restore();
+
+        for (var i = 0; i < 7; i++) {
+          final phase = ((_time * 0.42) + i / 7.0) % 1.0;
+          final a = c.aim - 1.2 + i * 0.42 + math.sin(_time * 0.7 + i) * 0.12;
+          final d = r * (1.05 + phase * 0.8);
           canvas.drawCircle(
-              pos + Offset(math.cos(a), math.sin(a)) * d - Offset(0, r * phase * 0.6),
-              r * (0.05 - phase * 0.025),
+              pos +
+                  Offset(math.cos(a), math.sin(a)) * d -
+                  Offset(0, r * phase * 0.7),
+              r * (0.075 - phase * 0.035),
               Paint()
-                ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3)
+                ..maskFilter = MaskFilter.blur(BlurStyle.normal, r * 0.12)
                 ..color = const Color(0xFFFFE9A8)
-                    .withValues(alpha: (1 - phase) * 0.7));
+                    .withValues(alpha: (1 - phase) * 0.8));
         }
       }
 
